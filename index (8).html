@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OnePoint Hospice Ordering Portal</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+  :root{
+    --brand:#c8003a; --brand-dk:#8f0a2b; --brand-tint:#fbe3e8;
+    --ink:#20232a; --muted:#5f6771; --line:#e4e6ea; --bg:#ffffff; --panel:#f4f6f8;
+    --accent:#0e7c86; --accent-tint:#e2f0f1; --dark:#363538; --green:#1f9d57;
+    --c2:#8c2231; --c2-tint:#f3eaec; --amber:#8a4a0a; --amber-tint:#f6ecdd; --radius:12px;
+    --mono:ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:var(--bg);font-size:15px;line-height:1.5}
+  a{color:var(--brand)}
+  .hidden{display:none !important}
+  .muted{color:var(--muted)}
+  .spacer{flex:1}
+  button{font-family:inherit;font-size:14px;font-weight:600;cursor:pointer;border-radius:9px;border:1px solid var(--line);background:#fff;color:var(--ink);padding:9px 14px}
+  button:hover{filter:brightness(.98)}
+  .btn-primary{background:var(--brand);border-color:var(--brand);color:#fff}
+  .btn-accent{background:var(--accent);border-color:var(--accent);color:#fff}
+  .btn-dark{background:var(--dark);border-color:var(--dark);color:#fff}
+  .btn-ghost{background:transparent}
+  .btn-sm{font-size:12.5px;padding:6px 11px}
+  input,select{font-family:inherit;font-size:14px;padding:9px 11px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--ink)}
+  .card{background:#fff;border:1px solid var(--line);border-radius:var(--radius);box-shadow:0 1px 2px rgba(0,0,0,.04)}
+  .wrap{max-width:1180px;margin:0 auto;padding:20px 22px 80px}
+
+  /* topbar */
+  .topbar{background:var(--dark);color:#fff;position:sticky;top:0;z-index:30}
+  .topbar-inner{max-width:1180px;margin:0 auto;padding:11px 22px;display:flex;align-items:center;gap:14px}
+  .logo{background:#fff;color:var(--dark);font-weight:800;letter-spacing:-.02em;padding:6px 12px;border-radius:9px;font-size:15px}
+  .logo b{color:var(--brand)}
+  .pill{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;padding:4px 11px;border-radius:20px;background:var(--brand-tint);color:var(--brand-dk)}
+  .whoami{font-size:13px;color:#e5e7eb}
+
+  /* login */
+  .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(900px 500px at 70% -10%,#f3d9e0,transparent),var(--bg);padding:20px}
+  .login-card{width:100%;max-width:400px;padding:28px 26px}
+  .login-card h1{font-size:20px;margin:4px 0 2px}
+  .fld{display:block;margin:12px 0}
+  .fld span{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px}
+  .fld input{width:100%}
+  .err{color:var(--brand-dk);background:var(--brand-tint);border:1px solid #f2b8c4;border-radius:8px;padding:9px 11px;font-size:13px;margin-top:10px}
+
+  /* tabs */
+  .tabbar{display:flex;gap:6px;border-bottom:1px solid var(--line);margin:6px 0 18px}
+  .tab{padding:10px 14px;font-weight:650;color:var(--muted);border-bottom:2px solid transparent;cursor:pointer;font-size:14px}
+  .tab.active{color:var(--brand);border-bottom-color:var(--brand)}
+
+  .section-head{display:flex;align-items:center;gap:12px;margin:2px 0 14px}
+  .section-head h2{font-size:20px;margin:0}
+
+  /* order layout */
+  .order-layout{display:grid;grid-template-columns:1fr 330px;gap:20px;align-items:start}
+  .med-row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-bottom:1px solid var(--line)}
+  .med-row:last-child{border-bottom:none}
+  .med-name{flex:1;min-width:150px}
+  .med-name b{font-size:14.5px}
+  .sub{color:var(--muted);font-size:12.5px;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .qty{display:flex;align-items:center;border:1px solid var(--line);border-radius:9px;overflow:hidden}
+  .qty button{border:none;border-radius:0;background:#fff;padding:8px 11px;font-size:15px}
+  .qty input{width:56px;text-align:center;border:none;border-left:1px solid var(--line);border-right:1px solid var(--line);border-radius:0;padding:8px 4px}
+  .cart{position:sticky;top:74px;overflow:hidden}
+  .cart-hd{padding:14px 16px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:8px}
+  .cart-body{max-height:calc(100vh - 260px);overflow:auto;padding:6px 14px}
+  .cart-line{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
+  .cart-foot{padding:14px 16px;border-top:1px solid var(--line)}
+
+  .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px}
+  .b-c2{background:var(--c2-tint);border:1px solid #7a2233;color:var(--c2)}
+  .b-c35{background:var(--amber-tint);border:1px solid #8a5316;color:var(--amber)}
+  .b-nc{background:var(--accent-tint);border:1px solid #1c6470;color:#0e6d78}
+
+  table.lines{width:100%;border-collapse:collapse}
+  table.lines th{text-align:left;font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);padding:8px 10px;border-bottom:1px solid var(--line)}
+  table.lines td{padding:9px 10px;border-bottom:1px solid var(--line);font-size:14px}
+
+  .inbox-row{display:grid;grid-template-columns:auto 1fr auto auto;gap:12px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .inbox-row:hover{background:var(--panel)}
+  .status{font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;white-space:nowrap}
+  .st-submitted{background:#fdecdd;color:#b4520a}
+  .st-review{background:#e2f0f1;color:#0e7c86}
+  .st-approved{background:#e6f6ec;color:#1f9d57}
+  .st-cancelled{background:#eceef1;color:#6b7480}
+  .st-dea,.st-ordered,.st-shipped,.st-complete{background:#e2f0f1;color:#0e7c86}
+  .avatar{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px}
+
+  .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--dark);color:#fff;padding:11px 18px;border-radius:10px;font-size:14px;box-shadow:0 6px 24px rgba(0,0,0,.25);opacity:0;pointer-events:none;transition:opacity .2s;z-index:60}
+  .toast.show{opacity:1}
+  .empty{text-align:center;color:var(--muted);padding:40px 20px}
+  @media(max-width:820px){ .order-layout{grid-template-columns:1fr} .cart{position:static} }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="view-login" class="login-shell">
+  <div class="card login-card">
+    <div class="logo" style="display:inline-block">One<b>Point</b> Ordering</div>
+    <h1>Sign in</h1>
+    <div class="muted" style="font-size:13px">Hospice ordering &amp; pharmacy fulfillment portal.</div>
+    <label class="fld"><span>Email</span><input id="li-email" type="email" autocomplete="username" placeholder="you@example.com"></label>
+    <label class="fld"><span>Password</span><input id="li-pw" type="password" autocomplete="current-password" placeholder="••••••••"></label>
+    <button class="btn-primary" id="li-go" style="width:100%;margin-top:6px">Sign in</button>
+    <div id="li-err" class="err hidden"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="view-app" class="hidden">
+  <div class="topbar"><div class="topbar-inner">
+    <div class="logo">One<b>Point</b> Ordering</div>
+    <span id="roleTag" class="pill"></span>
+    <span class="spacer"></span>
+    <span id="whoName" class="whoami"></span>
+    <button class="btn-ghost btn-sm" id="signout" style="color:#e5e7eb;border-color:#3b4655">Sign out</button>
+  </div></div>
+  <div class="wrap" id="appBody"></div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Config — safe to be public; Row-Level Security protects the data.
+// ---------------------------------------------------------------------------
+const SUPABASE_URL  = "https://tgyqaqgzaxylpggflzvw.supabase.co";
+const SUPABASE_ANON = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRneXFhcWd6YXh5bHBnZ2ZsenZ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODc5MTY0NjQsImV4cCI6MjEwMzQ5MjQ2NH0.pK9pCVNUPIGxb5FFkGDd8lEodShDI_8TFsV__CM149o";
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+
+const $ = s => document.querySelector(s);
+function toast(m){ const t=$('#toast'); t.textContent=m; t.classList.add('show'); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove('show'),2600); }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+// ---- session / identity ----------------------------------------------------
+let ME = null;   // { userId, email, fullName, isStaff, role, orgIds:[] }
+let CART = {};   // medId -> qty
+let MEDS = [];   // formulary cache
+let CURRENT_CC = null;   // care center object (hospice ordering)
+let RT = null;   // realtime channel
+
+async function boot(){
+  const { data:{ session } } = await db.auth.getSession();
+  if(session){ await afterLogin(session); } else { showLogin(); }
+  db.auth.onAuthStateChange((_e, s)=>{ if(!s){ showLogin(); } });
+}
+
+function showLogin(){
+  $('#view-app').classList.add('hidden');
+  $('#view-login').classList.remove('hidden');
+}
+
+async function doLogin(){
+  const email=$('#li-email').value.trim(), pw=$('#li-pw').value;
+  $('#li-err').classList.add('hidden');
+  if(!email||!pw){ return showErr('Enter your email and password.'); }
+  $('#li-go').textContent='Signing in…'; $('#li-go').disabled=true;
+  const { data, error } = await db.auth.signInWithPassword({ email, password:pw });
+  $('#li-go').textContent='Sign in'; $('#li-go').disabled=false;
+  if(error){ return showErr(error.message); }
+  await afterLogin(data.session);
+}
+function showErr(m){ const e=$('#li-err'); e.textContent=m; e.classList.remove('hidden'); }
+
+async function afterLogin(session){
+  const uid = session.user.id;
+  // memberships determine role + tenant
+  const { data:mem, error } = await db.from('memberships').select('role,org_id');
+  if(error){ return showErr('Could not load your account: '+error.message); }
+  const roles = (mem||[]).map(m=>m.role);
+  const isStaff = roles.includes('pharmacy') || roles.includes('admin');
+  const orgIds = (mem||[]).filter(m=>m.org_id).map(m=>m.org_id);
+  let fullName = session.user.email;
+  const { data:prof } = await db.from('profiles').select('full_name,title').eq('id',uid).maybeSingle();
+  if(prof && prof.full_name) fullName = prof.full_name;
+  ME = { userId:uid, email:session.user.email, fullName,
+         isStaff, role: roles.includes('admin')?'admin':(roles.includes('pharmacy')?'pharmacy':'hospice'),
+         orgIds };
+
+  if(!isStaff && orgIds.length===0){
+    // logged in but not assigned to anything yet
+    $('#view-login').classList.add('hidden'); $('#view-app').classList.remove('hidden');
+    $('#roleTag').textContent='No access'; $('#whoName').textContent=ME.email;
+    $('#appBody').innerHTML='<div class="card" style="padding:24px"><h2>Account not set up yet</h2><p class="muted">Your login works, but an administrator hasn\'t assigned you to an organization yet. Ask your OnePoint admin to add your membership.</p></div>';
+    wireChrome(); return;
+  }
+
+  $('#view-login').classList.add('hidden'); $('#view-app').classList.remove('hidden');
+  const rt = ME.role==='admin'?'Admin':(ME.role==='pharmacy'?'Pharmacy Staff':'Hospice');
+  $('#roleTag').textContent = rt;
+  $('#whoName').textContent = ME.fullName;
+  wireChrome();
+
+  if(ME.isStaff){ renderPharmacy(); }
+  else { CURRENT_CC=null; renderHospiceHome(); }
+  subscribeRealtime();
+}
+
+function wireChrome(){
+  $('#signout').onclick = async ()=>{ if(RT){ db.removeChannel(RT); RT=null; } await db.auth.signOut(); location.reload(); };
+}
+
+// ---- helpers ---------------------------------------------------------------
+function pkgInc(pack){ const m=(pack||'').match(/of\s+(\d+)(?:\s|$)/); return m?parseInt(m[1]):1; }
+function schClass(s){ return s==='CII'?'c2':(['CTRL','CIII','CIV','CV'].includes(s)?'c35':'nc'); }
+function schBadge(s){
+  if(s==='CII') return '<span class="badge b-c2">◆ Schedule II</span>';
+  if(['CTRL','CIII','CIV','CV'].includes(s)) return '<span class="badge b-c35">Schedule III–V</span>';
+  return '<span class="badge b-nc">Non-controlled</span>';
+}
+const STATUS_LABEL = { submitted:'Submitted', review:'Order Received', approved:'Approved', dea:'DEA 222', ordered:'Ordered', shipped:'Shipped', complete:'Complete', cancelled:'Cancelled' };
+
+async function loadMeds(){
+  if(MEDS.length) return MEDS;
+  const { data, error } = await db.from('medications').select('id,name,strength,form,schedule,pack').eq('active',true).order('name');
+  if(error){ toast('Could not load formulary: '+error.message); return []; }
+  MEDS = data||[]; return MEDS;
+}
+
+// ===========================================================================
+// HOSPICE
+// ===========================================================================
+async function renderHospiceHome(){
+  const b=$('#appBody');
+  const { data:ccs, error } = await db.from('care_centers').select('*').in('org_id', ME.orgIds).eq('active',true).order('name');
+  if(error){ b.innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
+  if(!ccs || !ccs.length){ b.innerHTML='<div class="empty">No care centers available for your account yet.</div>'; return; }
+  if(ccs.length===1){ CURRENT_CC=ccs[0]; return renderOrdering(); }
+  b.innerHTML = `<div class="section-head"><h2>Select your care center</h2></div><div class="card" id="ccList"></div>`;
+  $('#ccList').innerHTML = ccs.map(c=>`<div class="inbox-row" data-cc="${c.id}">
+      <span class="avatar" style="background:${c.color}22;color:${c.color}">${esc(c.short||'')}</span>
+      <div><b>${esc(c.name)}</b><div class="muted" style="font-size:12.5px">${esc(c.ship_to||'')}</div></div>
+      <span></span><button class="btn-ghost btn-sm">Select →</button></div>`).join('');
+  b.querySelectorAll('[data-cc]').forEach(r=>r.onclick=()=>{ CURRENT_CC=ccs.find(c=>c.id===r.dataset.cc); CART={}; renderOrdering(); });
+}
+
+let hospTab='order';
+async function renderOrdering(){
+  await loadMeds();
+  const b=$('#appBody');
+  b.innerHTML = `
+    <div class="section-head">
+      <h2>${esc(CURRENT_CC.name)}</h2>
+      <button class="btn-ghost btn-sm" id="switchCC">Switch care center</button>
+    </div>
+    <div class="tabbar">
+      <div class="tab ${hospTab==='order'?'active':''}" data-ht="order">Order Medications</div>
+      <div class="tab ${hospTab==='mine'?'active':''}" data-ht="mine">My Orders</div>
+    </div>
+    <div id="htBody"></div>`;
+  $('#switchCC').onclick=()=>{ CURRENT_CC=null; renderHospiceHome(); };
+  b.querySelectorAll('[data-ht]').forEach(t=>t.onclick=()=>{ hospTab=t.dataset.ht; renderOrdering(); });
+  if(hospTab==='order') renderCatalog(); else renderMyOrders();
+}
+
+function renderCatalog(){
+  const host=$('#htBody');
+  host.innerHTML = `
+    <div class="order-layout">
+      <div>
+        <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+          <input id="search" placeholder="Search medications…" style="flex:1;min-width:180px">
+          <select id="schFilter">
+            <option value="all">All schedules</option>
+            <option value="CII">Schedule II</option>
+            <option value="c35">Schedule III–V</option>
+            <option value="nc">Non-controlled</option>
+          </select>
+        </div>
+        <div class="card" id="medList"></div>
+      </div>
+      <div class="card cart">
+        <div class="cart-hd">🛒 <b>Your Cart</b><span class="spacer"></span><span id="cartCount" class="muted"></span></div>
+        <div class="cart-body" id="cartBody"></div>
+        <div class="cart-foot" id="cartFoot"></div>
+      </div>
+    </div>`;
+  $('#search').oninput=drawMeds; $('#schFilter').onchange=drawMeds;
+  drawMeds(); drawCart();
+}
+function drawMeds(){
+  const q=($('#search')?.value||'').toLowerCase().trim();
+  const f=$('#schFilter')?.value||'all';
+  let items=MEDS.filter(m=>{
+    if(f==='CII'&&m.schedule!=='CII') return false;
+    if(f==='c35'&&!['CTRL','CIII','CIV','CV'].includes(m.schedule)) return false;
+    if(f==='nc'&&!['RX','OTC'].includes(m.schedule)) return false;
+    if(q && !(m.name+' '+(m.strength||'')).toLowerCase().includes(q)) return false;
+    return true;
+  });
+  const host=$('#medList');
+  if(!items.length){ host.innerHTML='<div class="empty">No medications match.</div>'; return; }
+  host.innerHTML = items.map(m=>{
+    const inc=pkgInc(m.pack); const qn=CART[m.id]||0;
+    return `<div class="med-row">
+      <div class="med-name"><b>${esc(m.name)}</b>
+        <div class="sub">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(m.pack||'')} ${schBadge(m.schedule)}${inc>1?` · <span class="muted">multiples of ${inc}</span>`:''}</div>
+      </div>
+      <div class="qty" data-med="${m.id}">
+        <button data-act="dec">−</button>
+        <input type="number" min="0" step="${inc}" value="${qn}" data-inp>
+        <button data-act="inc">+</button>
+      </div>
+    </div>`;
+  }).join('');
+  host.querySelectorAll('.qty').forEach(q=>{
+    const id=q.dataset.med, inc=pkgInc((MEDS.find(m=>m.id===id)||{}).pack);
+    const inp=q.querySelector('[data-inp]');
+    const set=v=>{ v=Math.max(0,v); if(v>0)CART[id]=v; else delete CART[id]; inp.value=v; drawCart(); };
+    q.querySelector('[data-act=inc]').onclick=()=>set((parseInt(inp.value)||0)+inc);
+    q.querySelector('[data-act=dec]').onclick=()=>set(Math.max(0,(parseInt(inp.value)||0)-inc));
+    inp.onchange=()=>{ let v=parseInt(inp.value)||0; if(inc>1&&v%inc!==0){ v=Math.round(v/inc)*inc; toast('Rounded to multiples of '+inc); } set(v); };
+  });
+}
+function drawCart(){
+  const ids=Object.keys(CART).filter(id=>CART[id]>0);
+  $('#cartCount').textContent = ids.length? ids.length+' item'+(ids.length>1?'s':'') : '';
+  const body=$('#cartBody'), foot=$('#cartFoot');
+  if(!ids.length){ body.innerHTML='<div class="empty" style="padding:24px">Your cart is empty.</div>'; foot.innerHTML=''; return; }
+  body.innerHTML = ids.map(id=>{ const m=MEDS.find(x=>x.id===id); return `<div class="cart-line">
+      <div style="flex:1">${esc(m.name)} <span class="muted">${esc(m.strength||'')}</span></div>
+      <b>${CART[id]}</b><button class="btn-ghost btn-sm" data-rm="${id}">✕</button></div>`;}).join('');
+  const hasC2 = ids.some(id=>(MEDS.find(m=>m.id===id)||{}).schedule==='CII');
+  foot.innerHTML = `${hasC2?'<div class="badge b-c2" style="margin-bottom:10px">◆ Contains Schedule II — a DEA 222 step will follow approval</div>':''}
+    <button class="btn-primary" id="submitOrder" style="width:100%">Submit order request</button>`;
+  body.querySelectorAll('[data-rm]').forEach(x=>x.onclick=()=>{ delete CART[x.dataset.rm]; drawMeds(); drawCart(); });
+  $('#submitOrder').onclick=submitOrder;
+}
+
+async function submitOrder(){
+  const ids=Object.keys(CART).filter(id=>CART[id]>0);
+  if(!ids.length) return;
+  const btn=$('#submitOrder'); btn.disabled=true; btn.textContent='Submitting…';
+  const { data:ord, error } = await db.from('orders').insert({
+    care_center_id: CURRENT_CC.id, status:'submitted',
+    purchaser_name: ME.fullName, purchaser_email: ME.email, submitted_by: ME.userId
+  }).select().single();
+  if(error){ btn.disabled=false; btn.textContent='Submit order request'; return toast('Error: '+error.message); }
+  const lines = ids.map(id=>({ order_id:ord.id, medication_id:id, requested_qty:CART[id], approved_qty:CART[id] }));
+  const { error:e2 } = await db.from('order_lines').insert(lines);
+  if(e2){ return toast('Order created but lines failed: '+e2.message); }
+  await db.from('order_events').insert({ order_id:ord.id, type:'submitted', actor_id:ME.userId, actor_name:ME.fullName, note:'Order submitted' });
+  CART={}; toast('Order '+ord.order_no+' submitted.');
+  hospTab='mine'; renderOrdering();
+}
+
+async function renderMyOrders(){
+  const host=$('#htBody');
+  host.innerHTML='<div class="card"><div class="empty">Loading…</div></div>';
+  const { data:orders, error } = await db.from('orders')
+    .select('*, order_lines(requested_qty, medications(name,schedule))')
+    .eq('care_center_id', CURRENT_CC.id).order('created_at',{ascending:false});
+  if(error){ host.innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
+  if(!orders.length){ host.innerHTML='<div class="card"><div class="empty">No orders yet. Place your first order from the Order Medications tab.</div></div>'; return; }
+  host.innerHTML='<div class="card">'+orders.map(o=>{
+    const n=(o.order_lines||[]).length;
+    const canCancel=['submitted','review'].includes(o.status);
+    return `<div class="inbox-row" style="cursor:default">
+      <span class="status st-${o.status}">${STATUS_LABEL[o.status]||o.status}</span>
+      <div><b>${o.order_no}</b>${o.has_c2?' <span class="badge b-c2">◆ CII</span>':''}
+        <div class="muted" style="font-size:12.5px">${n} item${n!==1?'s':''} · ${new Date(o.created_at).toLocaleDateString()}</div></div>
+      <span></span>
+      ${canCancel?`<button class="btn-ghost btn-sm" data-cancel="${o.id}" style="color:var(--brand)">Cancel</button>`:'<span></span>'}
+    </div>`;}).join('')+'</div>';
+  host.querySelectorAll('[data-cancel]').forEach(x=>x.onclick=async()=>{
+    if(!confirm('Cancel this order?')) return;
+    const { error } = await db.rpc('cancel_order',{ p_order:x.dataset.cancel });
+    if(error) return toast('Error: '+error.message);
+    toast('Order cancelled.'); renderMyOrders();
+  });
+}
+
+// ===========================================================================
+// PHARMACY / ADMIN
+// ===========================================================================
+let ACTIVE_ORDER=null;
+async function renderPharmacy(){
+  ACTIVE_ORDER=null;
+  const b=$('#appBody');
+  b.innerHTML='<div class="section-head"><h2>Order Queue</h2></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
+  const { data:orders, error } = await db.from('orders')
+    .select('*, care_centers(name,color,short), order_lines(id)')
+    .order('created_at',{ascending:false});
+  if(error){ $('#queue').innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
+  if(!orders.length){ $('#queue').innerHTML='<div class="empty">No orders yet.</div>'; return; }
+  $('#queue').innerHTML = orders.map(o=>{
+    const cc=o.care_centers||{}; const n=(o.order_lines||[]).length;
+    return `<div class="inbox-row" data-open="${o.id}">
+      <span class="avatar" style="background:${(cc.color||'#888')}22;color:${cc.color||'#555'}">${esc(cc.short||'?')}</span>
+      <div><b>${o.order_no}</b>${o.has_c2?' <span class="badge b-c2">◆ CII</span>':''}
+        <div class="muted" style="font-size:12.5px">${esc(cc.name||'')} · ${n} item${n!==1?'s':''} · ${new Date(o.created_at).toLocaleString()}</div></div>
+      <span class="status st-${o.status}">${STATUS_LABEL[o.status]||o.status}</span>
+      <button class="btn-ghost btn-sm">Open →</button></div>`;
+  }).join('');
+  b.querySelectorAll('[data-open]').forEach(r=>r.onclick=()=>openOrder(r.dataset.open));
+}
+
+async function openOrder(id){
+  const b=$('#appBody');
+  b.innerHTML='<div class="empty">Loading…</div>';
+  const { data:o, error } = await db.from('orders')
+    .select('*, care_centers(*), order_lines(*, medications(name,strength,form,schedule,pack))')
+    .eq('id',id).single();
+  if(error){ b.innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
+  ACTIVE_ORDER=o;
+  const cc=o.care_centers||{};
+  const editable = ['submitted','review'].includes(o.status);
+  b.innerHTML = `
+    <button class="btn-ghost btn-sm" id="back">← Back to queue</button>
+    <div class="card" style="margin-top:12px;padding:18px 20px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <b style="font-size:17px">${o.order_no}</b>
+        <span class="status st-${o.status}">${STATUS_LABEL[o.status]||o.status}</span>
+        ${o.has_c2?'<span class="badge b-c2">◆ Contains Schedule II</span>':''}
+        <span class="spacer"></span>
+        <span class="muted" style="font-size:12.5px">${esc(cc.name||'')} · ${new Date(o.created_at).toLocaleString()}${o.purchaser_name?' · '+esc(o.purchaser_name):''}</span>
+      </div>
+      <div id="pharmActions" style="display:flex;gap:10px;flex-wrap:wrap;margin:16px 0 4px"></div>
+      <table class="lines" style="margin-top:8px">
+        <thead><tr><th>Medication</th><th>Sched</th><th style="text-align:right">Requested</th><th style="text-align:right">Approve Qty</th><th style="text-align:right">Packages</th></tr></thead>
+        <tbody>${o.order_lines.map((l,i)=>{ const m=l.medications||{}; const inc=pkgInc(m.pack); const pk=inc>1?Math.round((l.approved_qty||0)/inc):(l.approved_qty||0);
+          return `<tr>
+            <td><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(m.pack||'')}</div></td>
+            <td>${schBadge(m.schedule)}</td>
+            <td style="text-align:right">${l.requested_qty}</td>
+            <td style="text-align:right">${editable?`<input type="number" min="0" step="${inc}" value="${l.approved_qty}" data-line="${i}" style="width:80px;text-align:right">`:`<b>${l.approved_qty}</b>`}</td>
+            <td style="text-align:right" data-pk="${i}"><b>${pk}</b></td>
+          </tr>`;}).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  $('#back').onclick=renderPharmacy;
+  renderPharmActions(o, editable);
+  b.querySelectorAll('input[data-line]').forEach(inp=>inp.onchange=()=>{
+    const i=+inp.dataset.line, l=o.order_lines[i], inc=pkgInc((l.medications||{}).pack);
+    let v=parseInt(inp.value)||0; if(inc>1&&v%inc!==0){ v=Math.round(v/inc)*inc; toast('Rounded to multiples of '+inc); }
+    l.approved_qty=v; inp.value=v;
+    const pk=b.querySelector('[data-pk="'+i+'"]'); if(pk) pk.innerHTML='<b>'+(inc>1?Math.round(v/inc):v)+'</b>';
+  });
+}
+
+function renderPharmActions(o, editable){
+  const host=$('#pharmActions'); if(!host) return;
+  let html='';
+  if(o.status==='submitted') html+='<button class="btn-dark" data-adv="review">📥 Order Received</button>';
+  if(o.status==='review')    html+='<button class="btn-accent" data-adv="approved">✓ Approve</button>';
+  if(['submitted','review'].includes(o.status)) html+='<button class="btn-ghost" data-cancel style="color:var(--brand)">Cancel order</button>';
+  if(o.status==='approved')  html+='<span class="muted">Approved. (DEA 222, invoicing, shipment &amp; fulfillment arrive in Phase 2.)</span>';
+  if(o.status==='cancelled') html+='<span class="muted">This order was cancelled.</span>';
+  host.innerHTML=html||'<span class="muted">No actions.</span>';
+  host.querySelectorAll('[data-adv]').forEach(btn=>btn.onclick=()=>advance(o, btn.dataset.adv));
+  const cx=host.querySelector('[data-cancel]'); if(cx) cx.onclick=async()=>{
+    if(!confirm('Cancel this order?')) return;
+    const { error }=await db.rpc('cancel_order',{p_order:o.id}); if(error) return toast(error.message);
+    toast('Order cancelled.'); openOrder(o.id);
+  };
+}
+
+async function advance(o, to){
+  // when approving, persist the (possibly edited) approved quantities
+  if(to==='approved'){
+    for(const l of o.order_lines){
+      await db.from('order_lines').update({ approved_qty:l.approved_qty }).eq('id',l.id);
+    }
+  }
+  const { error } = await db.from('orders').update({ status:to }).eq('id',o.id);
+  if(error) return toast('Error: '+error.message);
+  await db.from('order_events').insert({ order_id:o.id, type:to, actor_id:ME.userId, actor_name:ME.fullName });
+  toast(to==='review'?'Marked as received.':'Order approved.');
+  openOrder(o.id);
+}
+
+// ---- realtime: refresh the current view when orders change -----------------
+function subscribeRealtime(){
+  if(RT){ db.removeChannel(RT); RT=null; }
+  RT = db.channel('orders-live')
+    .on('postgres_changes',{ event:'*', schema:'public', table:'orders' }, ()=>{
+      if(ME.isStaff && !ACTIVE_ORDER){ renderPharmacy(); }
+      else if(!ME.isStaff && CURRENT_CC && hospTab==='mine'){ renderMyOrders(); }
+    })
+    .subscribe();
+}
+
+// ---- go --------------------------------------------------------------------
+$('#li-go').onclick=doLogin;
+$('#li-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
+boot();
+</script>
+</body>
+</html>
