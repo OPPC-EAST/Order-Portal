@@ -666,6 +666,7 @@ let CART = {};   // medId -> qty
 let PHARM_BUILD = false;              // true while pharmacy is building an order on a facility's behalf
 let PHARM_CONTACT = {name:'',email:''};
 let PHARM_DRAFT_ID = null;            // id of the draft order being edited (null = new build)
+let PHARM_EDIT_ORDER = null;          // submitted pharmacy-generated order being amended (add missed items)
 let MEDS = [];   // formulary cache
 let CURRENT_CC = null;   // care center object (hospice ordering)
 let RT = null;   // realtime channel
@@ -679,24 +680,104 @@ function saveCart(){
   if(!ME||!CURRENT_CC) return;
   const store=loadCartStore();
   const cart={}; Object.keys(CART).forEach(k=>{ if(CART[k]>0) cart[k]=CART[k]; });
-  if(Object.keys(cart).length){ store[cartKey()]={ cart, ts:new Date().toISOString() }; }
+  if(Object.keys(cart).length){ store[cartKey()]={ cart, nf:[...NEW_TO_FORMULARY].filter(id=>cart[id]), ts:new Date().toISOString() }; }
   else { delete store[cartKey()]; }
   safeLS(()=>localStorage.setItem(CART_LS, JSON.stringify(store)));
 }
-function loadCartFor(){ const s=loadCartStore()[cartKey()]; CART = (s&&s.cart)?{...s.cart}:{}; return s&&s.ts; }
+function loadCartFor(){ const s=loadCartStore()[cartKey()]; CART = (s&&s.cart)?{...s.cart}:{}; NEW_TO_FORMULARY=new Set((s&&s.nf)||[]); return s&&s.ts; }
+/* ---- Pending carts: unfinished self-order carts saved as drafts, per user + care center ----
+   Stored next to the auto-saved cart (same browser storage), so they stay tied to this care unit. */
+const DRAFTS_LS='oppc_cart_drafts_v1';
+function loadDraftStore(){ const raw=safeLS(()=>localStorage.getItem(DRAFTS_LS)); if(raw){ try{ return JSON.parse(raw)||{}; }catch(e){} } return {}; }
+function getDrafts(){ const d=loadDraftStore()[cartKey()]; return Array.isArray(d)?d:[]; }
+function putDrafts(list){ const st=loadDraftStore(); if(list&&list.length) st[cartKey()]=list; else delete st[cartKey()]; safeLS(()=>localStorage.setItem(DRAFTS_LS, JSON.stringify(st))); }
+function activeCartIds(){ return Object.keys(CART).filter(id=>CART[id]>0); }
+// Move the active cart into Pending Carts and leave a new, empty cart. Returns the saved draft (or null if empty).
+function stashCartAsDraft(){
+  if(!ME||!CURRENT_CC) return null;
+  const ids=activeCartIds(); if(!ids.length) return null;
+  const cart={}; ids.forEach(id=>cart[id]=CART[id]);
+  const prev=loadCartStore()[cartKey()];
+  const d={ id:'d'+Date.now().toString(36)+Math.random().toString(36).slice(2,6), cart,
+            nf:[...NEW_TO_FORMULARY].filter(id=>cart[id]), created:(prev&&prev.ts)||new Date().toISOString(), ts:new Date().toISOString() };
+  const list=getDrafts(); list.unshift(d); putDrafts(list);
+  CART={}; NEW_TO_FORMULARY=new Set(); saveCart();
+  return d;
+}
+function draftSummary(cart){
+  const ids=Object.keys(cart||{}).filter(id=>cart[id]>0);
+  const names=ids.map(id=>{ const m=MEDS.find(x=>x.id===id); return m?(m.name+(m.strength?' '+m.strength:'')):'(no longer on formulary)'; });
+  return { n:ids.length, units:ids.reduce((a,id)=>a+(+cart[id]||0),0), preview:names.slice(0,3).join(', ')+(names.length>3?` and ${names.length-3} more`:'') };
+}
+function fmtWhen(ts){ return ts?new Date(ts).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}):''; }
+// Resume one pending cart. If another cart is active, it is saved as a draft first so nothing is lost.
+async function resumeDraft(draftId){
+  const list=getDrafts(); const d=list.find(x=>x.id===draftId); if(!d) return toast('That pending cart no longer exists.', true);
+  let stashed=null;
+  if(activeCartIds().length) stashed=stashCartAsDraft();
+  await loadMeds(); await loadStocked();
+  const restored={}, dropped=[];
+  Object.keys(d.cart||{}).forEach(id=>{ const q=+d.cart[id]||0; if(q<=0) return;
+    const m=MEDS.find(x=>x.id===id);
+    if(m && !CC_DEACTIVATED.has(id)) restored[id]=q; else dropped.push(m?(m.name+(m.strength?' '+m.strength:'')):'an item no longer on the formulary'); });
+  CART=restored; NEW_TO_FORMULARY=new Set((d.nf||[]).filter(id=>restored[id])); saveCart();
+  putDrafts(getDrafts().filter(x=>x.id!==draftId));
+  toast((stashed?'Your current cart was saved to Pending Carts. ':'')+'Pending cart resumed.');
+  if(dropped.length) setTimeout(()=>toast('Removed (no longer orderable here): '+dropped.join(', '), true), 600);
+  hospTab='order'; renderOrdering();
+}
+async function deleteDraft(draftId){
+  const d=getDrafts().find(x=>x.id===draftId); if(!d) return;
+  const sm=draftSummary(d.cart);
+  if(!await uiConfirm(`Permanently delete this pending cart (<b>${sm.n}</b> item${sm.n!==1?'s':''}, saved ${esc(fmtWhen(d.ts))})? Other carts and orders are not affected. This cannot be undone.`,{title:'Delete pending cart',okText:'Delete',danger:true})) return;
+  putDrafts(getDrafts().filter(x=>x.id!==draftId));
+  toast('Pending cart deleted.'); renderOrdering();
+}
+async function renderPendingCarts(){
+  await loadMeds();
+  const host=$('#htBody'); if(!host) return;
+  const list=getDrafts().slice().sort((a,b)=>String(b.ts).localeCompare(String(a.ts)));
+  const act=activeCartIds();
+  const actCard = act.length ? (()=>{ const sm=draftSummary(CART); return `<div class="card" style="padding:14px 16px;margin-bottom:12px;border-color:#cfe0f2;background:#f5f9fd">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px"><b>Current cart</b> <span class="badge" style="background:#eef4fb;border:1px solid #cfe0f2;color:#2c4a63">In progress</span>
+          <div style="font-size:13px;margin-top:4px">${sm.n} item${sm.n!==1?'s':''} · ${sm.units} unit${sm.units!==1?'s':''}</div>
+          <div class="muted" style="font-size:12.5px;margin-top:2px">${esc(sm.preview)}</div></div>
+        <button class="btn-ghost btn-sm" id="pcStash">🗂 Save as draft</button>
+        <button class="btn-primary btn-sm" id="pcOpen">Continue this cart</button>
+      </div>
+      <div class="muted" style="font-size:12px;margin-top:8px">Save the current cart as a draft to manage it here or start another order.</div></div>`; })() : '';
+  const rows = list.map(d=>{ const sm=draftSummary(d.cart); return `<div class="card" style="padding:14px 16px;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div style="flex:1;min-width:220px"><b>Pending cart</b> <span class="muted" style="font-size:12.5px">· saved ${esc(fmtWhen(d.ts))}</span>
+          <div style="font-size:13px;margin-top:4px">${sm.n} item${sm.n!==1?'s':''} · ${sm.units} unit${sm.units!==1?'s':''}</div>
+          <div class="muted" style="font-size:12.5px;margin-top:2px">${esc(sm.preview)}</div></div>
+        <button class="btn-ghost btn-sm" data-pcdel="${d.id}" style="color:#c0392b;border-color:#e0b4bc">🗑 Delete</button>
+        <button class="btn-primary btn-sm" data-pcres="${d.id}">Resume</button>
+      </div></div>`; }).join('');
+  host.innerHTML = `<div class="muted" style="font-size:13px;margin:0 0 12px">Unfinished carts for <b>${esc(CURRENT_CC.name)}</b>. Resume one to keep ordering, or delete carts you no longer need. Pending carts are saved in this browser for your sign-in.</div>
+    ${actCard}${rows || (act.length?'':'<div class="card"><div class="empty" style="padding:36px 20px">No pending carts. When you save a cart as a draft, it shows up here.</div></div>')}
+    ${(!rows && act.length)?'<div class="muted" style="font-size:12.5px;padding:4px 2px">No other pending carts.</div>':''}`;
+  const st=$('#pcStash'); if(st) st.onclick=()=>{ if(stashCartAsDraft()){ toast('Cart saved to Pending Carts. Your new cart is empty.'); renderOrdering(); } };
+  const op=$('#pcOpen'); if(op) op.onclick=()=>{ hospTab='order'; renderOrdering(); };
+  host.querySelectorAll('[data-pcres]').forEach(b=>b.onclick=()=>resumeDraft(b.dataset.pcres));
+  host.querySelectorAll('[data-pcdel]').forEach(b=>b.onclick=()=>deleteDraft(b.dataset.pcdel));
+}
 function promptResumeCart(ts){
   const n=Object.keys(CART).filter(id=>CART[id]>0).length;
   if(!n) return;
   const when = ts ? new Date(ts).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
   const ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px';
-  ov.innerHTML=`<div class="card" style="max-width:450px;width:100%;padding:20px 22px">
+  ov.innerHTML=`<div class="card" style="max-width:540px;width:100%;padding:20px 22px">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:24px">🛒</span><h3 style="flex:1;margin:0">Resume your saved cart?</h3></div>
     <p style="margin:0 0 8px;font-size:14px">You have a saved cart for <b>${esc(CURRENT_CC.name)}</b>${when?' (last edited '+esc(when)+')':''} that wasn’t submitted:</p>
     <p style="margin:0 0 4px;font-size:14px"><b>${n}</b> item${n>1?'s':''} in your cart.</p>
-    <p class="muted" style="font-size:13px;margin-top:10px">Continue where you left off, or clear it and start a new order?</p>
-    <div class="m-foot">
+    ${(()=>{ const nd=getDrafts().length; return nd?`<p class="muted" style="font-size:13px;margin:6px 0 0">You also have <b>${nd}</b> other pending cart${nd!==1?'s':''} — see the <b>Pending Carts</b> tab.</p>`:''; })()}
+    <p class="muted" style="font-size:13px;margin-top:10px">Continue where you left off, save it as a draft and start a new order, or clear it and start over?</p>
+    <div class="m-foot" style="flex-wrap:wrap;gap:8px">
       <button class="btn-ghost" data-clear style="color:#c0392b;border-color:#c0392b">Delete &amp; start new</button>
+      <button class="btn-ghost" data-stash>🗂 Save as draft &amp; start new</button>
       <button class="btn-primary" data-continue>Continue with saved cart</button>
     </div>
   </div>`;
@@ -704,7 +785,8 @@ function promptResumeCart(ts){
   const close=()=>ov.remove();
   /* backdrop click disabled — close only via the ✕ or Cancel */   // clicking outside keeps the saved cart
   ov.querySelector('[data-continue]').onclick=()=>{ close(); hospTab='order'; renderOrdering(); };
-  ov.querySelector('[data-clear]').onclick=()=>{ CART={}; saveCart(); close(); if($('#medList')){ drawMeds(); drawCart(); } toast('Cart cleared — starting a new order.'); };
+  ov.querySelector('[data-clear]').onclick=()=>{ CART={}; NEW_TO_FORMULARY=new Set(); saveCart(); close(); if($('#medList')){ drawMeds(); drawCart(); } toast('Cart cleared — starting a new order.'); };
+  ov.querySelector('[data-stash]').onclick=()=>{ stashCartAsDraft(); close(); toast('Cart saved to Pending Carts — starting a new order.'); hospTab='order'; renderOrdering(); };
 }
 
 async function boot(){
@@ -1275,7 +1357,7 @@ function wholesaleRequestDoc(o, rx){
      </div>
      ${o.purchaser_name?`<div style="margin-top:14px;font-size:12px"><b>${esc(o.purchaser_name)}${o.purchaser_title?', '+esc(o.purchaser_title):''}</b><br><span style="color:#5c6b78">Printed name &amp; title</span></div>`:''}
      <div class="fax">➤ Sign, date, and fax this request to ${PHARMACY.name}: ${PHARMACY.fax}</div>
-     <div style="margin-top:16px;text-align:center;font-size:12px;color:#5c2530;border:1px solid #e3e8ee;background:#f7f8fa;border-radius:8px;padding:8px 10px">🚚 <b>Est. ship date:</b> ${shipMondayLabel(cc)} <span style="color:#5c6b78">(if approved by ${esc(cutoffLabel(cc))} CST)</span></div>
+     ${pharmGen?'':`<div style="margin-top:16px;text-align:center;font-size:12px;color:#5c2530;border:1px solid #e3e8ee;background:#f7f8fa;border-radius:8px;padding:8px 10px">🚚 <b>Est. ship date:</b> ${shipMondayLabel(cc)} <span style="color:#5c6b78">(if approved by ${esc(cutoffLabel(cc))} CST)</span></div>`}
     </div>`;
   };
   // Split into three separate forms by schedule class — each prints as its own page/form.
@@ -1647,8 +1729,9 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
   const dSec = hasC2 ? `<div style="font-size:12px;font-weight:800;color:#37506e;margin:12px 0 4px">${nD} DEA Form 222 preview <span style="font-weight:500;color:#8a95a1">— edit packages/size in the panel on the right</span></div>
     <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:hidden;height:min(600px,70vh);background:#eef1f5"><iframe id="pkD" title="DEA 222" style="border:0;display:block;width:100%;height:100%;background:#eef1f5"></iframe></div>` : '';
   const pkLabel = deaFirst ? 'DEA Form 222 preview + Wholesale Order' : (hasC2 ? 'Wholesale Order + DEA Form 222 preview' : 'Wholesale Order');
-  const ov=modal(`<h3 style="margin:0 0 4px">Edit &amp; download approval packet — ${esc(orderNo||'')}</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:4px">Click any field on the wholesale form to edit it.${hasC2?' On the DEA&nbsp;222, adjust <b>No. of Packages</b> / <b>Package Size</b> in the panel on the right.':''} Your changes apply only to the downloaded PDF — they are <b>not</b> saved to the order.</div>
+  const ov=modal(`<div class="pk-sticky" style="position:sticky;top:-20px;z-index:2;background:#fff;margin:-20px -22px 6px;padding:20px 60px 10px 22px;border-bottom:1px solid #e3e8ee">
+    <h3 style="margin:0 0 4px">Edit &amp; download approval packet — ${esc(orderNo||'')}</h3>
+    <div class="muted" style="font-size:12.5px">Click any field on the wholesale form to edit it.${hasC2?' On the DEA&nbsp;222, adjust <b>No. of Packages</b> / <b>Package Size</b> in the panel on the right.':''} Your changes apply only to the downloaded PDF — they are <b>not</b> saved to the order.</div></div>
     ${deaFirst ? dSec + wSec : wSec + dSec}
     <div style="display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap">
       <button class="btn-primary" id="pkDl">📄 Download packet (PDF)</button>
@@ -1657,6 +1740,7 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
       <div id="pkStatus" class="muted" style="font-size:12.5px;flex:1;min-width:140px"></div>
     </div>
     <div class="muted" style="font-size:11.5px;margin-top:8px">The PDF (${pkLabel}) saves to your Downloads folder. In your email, choose “Attach file” and pick <b>Order-Packet-${esc(orderNo||'order')}.pdf</b>.</div>`, 1080);
+  { const hx=ov.querySelector('.modal-x'), hs=ov.querySelector('.pk-sticky'); if(hx&&hs){ hs.appendChild(hx); hx.style.top='16px'; hx.style.right='16px'; } }  // keep ✕ in the pinned header
   const st=ov.querySelector('#pkStatus'), dl=ov.querySelector('#pkDl');
   const pkW=ov.querySelector('#pkW'), pkD=ov.querySelector('#pkD');
   // Wholesale form: editable in place, pages separated on screen.
@@ -1897,7 +1981,7 @@ async function renderOrdering(){
   const { count } = await db.from('orders').select('id',{count:'exact',head:true}).eq('care_center_id',CURRENT_CC.id).not('status','in','(complete,cancelled,draft)');
   const nOrders = count||0;   // pending (active) orders only
   const pharmMode = CURRENT_CC.ordering_mode==='pharmacy';
-  if(pharmMode && hospTab==='order') hospTab='mine';   // hospice can't create in pharmacy-order mode
+  if(pharmMode && (hospTab==='order'||hospTab==='drafts')) hospTab='mine';   // hospice can't create in pharmacy-order mode
   const org=ME.org||{};
   const b=$('#appBody');
   b.innerHTML = `
@@ -1913,6 +1997,7 @@ async function renderOrdering(){
     <div class="tabbar">
       ${pharmMode?'':`<div class="tab ${hospTab==='order'?'active':''}" data-ht="order">🛒 Order Medications</div>`}
       <div class="tab ${hospTab==='mine'||pharmMode?'active':''}" data-ht="mine">📋 My Orders <span class="muted">(${nOrders})</span></div>
+      ${pharmMode?'':`<div class="tab ${hospTab==='drafts'?'active':''}" data-ht="drafts">🗂 Pending Carts <span class="muted">(${getDrafts().length})</span></div>`}
     </div>
     <div id="htBody"></div>`;
   const sw=$('#switchCC'); if(sw) sw.onclick=()=>{ CURRENT_CC=null; hospTab=null; renderHospiceHome(); };
@@ -1922,6 +2007,7 @@ async function renderOrdering(){
   if(pharmMode) renderMyOrders();
   else if(hospTab==='order') renderCatalog();
   else if(hospTab==='mine') renderMyOrders();
+  else if(hospTab==='drafts') renderPendingCarts();
   else {
     $('#htBody').innerHTML=`<div class="card"><div class="empty" style="padding:48px 20px">
       <div style="font-size:34px">👋</div>
@@ -2070,14 +2156,15 @@ function drawCart(){
       <span class="muted" style="font-size:12.5px">${lineCount} item(s) · ${unitCount} unit(s)</span>
       <span id="cartClear" style="cursor:pointer;color:#c0392b;font-size:12px;font-weight:600">Clear</span>
     </div>
-    <button class="btn-primary" id="submitOrder" style="width:100%">${PHARM_BUILD?(PHARM_DRAFT_ID?'✓ Submit order':'✓ Create order for '+esc(CURRENT_CC.name||'facility')):'Review &amp; Checkout →'}</button>
-    ${PHARM_BUILD?`<button class="btn-ghost" id="saveDraft" style="width:100%;margin-top:8px">💾 Save as draft</button>`:''}
+    <button class="btn-primary" id="submitOrder" style="width:100%">${PHARM_BUILD?(PHARM_EDIT_ORDER?'✓ Save changes to '+esc(PHARM_EDIT_ORDER.order_no):(PHARM_DRAFT_ID?'✓ Submit order':'✓ Create order for '+esc(CURRENT_CC.name||'facility'))):'Review &amp; Checkout →'}</button>
+    ${PHARM_BUILD?(PHARM_EDIT_ORDER?'':`<button class="btn-ghost" id="saveDraft" style="width:100%;margin-top:8px">💾 Save as draft</button>`):`<button class="btn-ghost" id="cartToDraft" style="width:100%;margin-top:8px">🗂 Save as draft &amp; start new</button>`}
     ${(PHARM_BUILD&&hasC2)?`<button class="btn-ghost" id="dea222Preview" style="width:100%;margin-top:8px;color:var(--c2);border-color:#d9b3bb">◆ DEA 222 Preview</button>`:''}
     <div style="font-size:11.5px;text-align:center;margin-top:8px;color:var(--brand-dk);background:var(--brand-tint);border-radius:8px;padding:6px 8px">🚚 Est. ship date: <b>${shipMondayLabel()}</b> <span class="muted" style="color:var(--brand-dk)">(if approved by ${esc(cutoffLabel())} CST)</span></div>
-    <div class="muted" id="draftStatus" style="font-size:11px;text-align:center;margin-top:8px">${PHARM_BUILD?'💾 Keep building — your cart is saved to Drafts automatically when you leave this screen, and you can resume anytime.':'💾 Saved automatically'}</div>`;
+    <div class="muted" id="draftStatus" style="font-size:11px;text-align:center;margin-top:8px">${PHARM_BUILD?(PHARM_EDIT_ORDER?'Existing items and details are kept. Add what was missed, then save changes.':'💾 Keep building — your cart is saved to Drafts automatically when you leave this screen, and you can resume anytime.'):'💾 Saved automatically'}</div>`;
   body.querySelectorAll('[data-rm]').forEach(x=>x.onclick=()=>{ delete CART[x.dataset.rm]; saveCart(); drawMeds(); drawCart(); });
   const cl=$('#cartClear'); if(cl) cl.onclick=async()=>{ if(await uiConfirm('Clear all items from this cart?',{title:'Clear cart',okText:'Clear',danger:true})){ CART={}; saveCart(); drawMeds(); drawCart(); } };
-  $('#submitOrder').onclick = PHARM_BUILD ? pharmacySubmitFromCart : openCheckout;
+  $('#submitOrder').onclick = PHARM_BUILD ? (PHARM_EDIT_ORDER ? pharmacySaveOrderEdits : pharmacySubmitFromCart) : openCheckout;
+  { const ctd=$('#cartToDraft'); if(ctd) ctd.onclick=()=>{ if(stashCartAsDraft()){ toast('Cart saved to Pending Carts — starting a new order.'); renderOrdering(); } }; }
   { const sd=$('#saveDraft'); if(sd) sd.onclick=()=>pharmacySaveDraft(); }
   { const d2=$('#dea222Preview'); if(d2) d2.onclick=openDea222FromCart; }
   // No per-keystroke DB autosave while building — the cart is persisted as a Draft only
@@ -2087,8 +2174,9 @@ function drawCart(){
 // ---- Auto-save pharmacy drafts (debounced) so work survives logout / session loss ----
 let AUTOSAVE_T=null, AUTOSAVE_BUSY=false;
 function setDraftStatus(txt){ const el=$('#draftStatus'); if(el) el.textContent=txt; }
-function scheduleDraftAutosave(){ if(!PHARM_BUILD) return; clearTimeout(AUTOSAVE_T); AUTOSAVE_T=setTimeout(()=>pharmacyAutoSaveDraft(), 1500); }
+function scheduleDraftAutosave(){ if(!PHARM_BUILD || PHARM_EDIT_ORDER) return; clearTimeout(AUTOSAVE_T); AUTOSAVE_T=setTimeout(()=>pharmacyAutoSaveDraft(), 1500); }
 async function pharmacyAutoSaveDraft(){
+  if(PHARM_EDIT_ORDER) return;                    // amending a submitted order — never write a draft
   if(!PHARM_BUILD || AUTOSAVE_BUSY) { if(AUTOSAVE_BUSY) scheduleDraftAutosave(); return; }
   const ids=Object.keys(CART).filter(id=>CART[id]>0);
   if(!ids.length) return;                         // never create an empty draft
@@ -2707,8 +2795,8 @@ async function unlockAdminTabs(cb){
   if(pw===ADMIN_TAB_PW){ ADMIN_UNLOCKED=true; toast('Management tabs unlocked for this session.'); cb(); }
   else toast('Incorrect password.');
 }
-async function renderStaff(){
-  ACTIVE_ORDER=null; PHARM_BUILD=false;
+async function renderStaff(opts){
+  ACTIVE_ORDER=null; PHARM_BUILD=false; PHARM_EDIT_ORDER=null;
   // gate protected tabs behind the password
   if(PROTECTED_TABS.includes(staffView) && !ADMIN_UNLOCKED){
     const wanted=staffView; staffView='queue';
@@ -2726,6 +2814,7 @@ async function renderStaff(){
     staffView=sv; renderStaff();
   });
   const host=$('#staffBody');
+  if(opts&&opts.shellOnly) return;
   if(staffView==='queue') renderQueue(host);
   else if(staffView==='facilities') renderFacilities(host);
   else if(staffView==='formulary') renderFormulary(host);
@@ -2859,26 +2948,78 @@ async function pharmacyOrderModal(){
   };
 }
 // Step 2: the pharmacy builds the order using the SAME catalog/cart the hospice self-order uses.
-async function pharmacyBuildScreen(cc, draft){
+async function pharmacyBuildScreen(cc, draft, editOrder){
   CURRENT_CC=cc; PHARM_BUILD=true; CART={}; NEW_TO_FORMULARY=new Set(); STOCKED_CC=null;
-  PHARM_DRAFT_ID = draft ? draft.id : null;
+  PHARM_EDIT_ORDER = editOrder || null;
+  if(editOrder) draft = editOrder;
+  PHARM_DRAFT_ID = (draft && !editOrder) ? draft.id : null;
   await loadMeds(); await loadStocked();
   if(draft){
-    (draft.order_lines||[]).forEach(l=>{ const qn=(l.requested_qty!=null?l.requested_qty:l.approved_qty)||0; if(l.medication_id && qn>0) CART[l.medication_id]=qn; });
+    (draft.order_lines||[]).forEach(l=>{ const qn=(PHARM_EDIT_ORDER ? (l.approved_qty!=null?l.approved_qty:l.requested_qty) : (l.requested_qty!=null?l.requested_qty:l.approved_qty))||0; if(l.medication_id && qn>0) CART[l.medication_id]=qn; });
     PHARM_CONTACT={ name:draft.purchaser_name||'', email:draft.purchaser_email||'' };
     saveCart();
   }
   const host=$('#staffBody'); if(!host) return;
   host.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin:2px 0 12px;flex-wrap:wrap">
-      <button class="btn-ghost btn-sm" id="poBack">← Back to queue</button>
-      <span class="muted">${PHARM_DRAFT_ID?'Editing draft for':'Creating order for'}</span> <b>${esc(cc.name)}</b>
-      <span class="badge b-c35">Pharmacy-generated</span>${PHARM_DRAFT_ID?' <span class="badge" style="background:#eef4fb;border:1px solid #cfe0f2;color:#2c4a63">Draft</span>':''}
+      <button class="btn-ghost btn-sm" id="poBack">${PHARM_EDIT_ORDER?'← Back to order (no changes)':'← Back to queue'}</button>
+      <span class="muted">${PHARM_EDIT_ORDER?'Adding items to':(PHARM_DRAFT_ID?'Editing draft for':'Creating order for')}</span> <b>${PHARM_EDIT_ORDER?esc(PHARM_EDIT_ORDER.order_no)+' · ':''}${esc(cc.name)}</b>
+      <span class="badge b-c35">Pharmacy-generated</span>${PHARM_DRAFT_ID?' <span class="badge" style="background:#eef4fb;border:1px solid #cfe0f2;color:#2c4a63">Draft</span>':''}${PHARM_EDIT_ORDER?' <span class="badge" style="background:#fff6e6;border:1px solid #f0d9a8;color:#8a5a12">Submitted order</span>':''}
       <span style="flex:1"></span>
       ${PHARM_CONTACT.email?`<span class="muted" style="font-size:12px">Approval alert → ${esc(PHARM_CONTACT.email)}</span>`:''}
     </div>
     <div id="htBody"></div>`;
-  $('#poBack').onclick=async()=>{ clearTimeout(AUTOSAVE_T); await pharmacyAutoSaveDraft(); PHARM_BUILD=false; PHARM_DRAFT_ID=null; renderStaff(); };
+  $('#poBack').onclick=async()=>{
+    if(PHARM_EDIT_ORDER){ const id=PHARM_EDIT_ORDER.id; PHARM_BUILD=false; PHARM_EDIT_ORDER=null; CART={}; NEW_TO_FORMULARY=new Set(); saveCart(); openOrder(id); return; }
+    clearTimeout(AUTOSAVE_T); await pharmacyAutoSaveDraft(); PHARM_BUILD=false; PHARM_DRAFT_ID=null; renderStaff(); };
   renderCatalog();
+}
+// Return from a submitted pharmacy-generated order to the order builder to add missed items.
+// Opens the same catalog/cart pre-filled with the order's current lines. Saving updates the
+// existing order in place — line records (NDCs, approvals) for untouched items are kept.
+async function pharmacyEditSubmitted(orderId){
+  const { data:o, error } = await db.from('orders').select('*, care_centers(*), order_lines(*)').eq('id',orderId).maybeSingle();
+  if(error||!o){ toast('Could not open the order.', true); return; }
+  if(!o.created_by_pharmacy || !['submitted','review'].includes(o.status)){ toast('Items can only be added before the order is approved.', true); return; }
+  await renderStaff({shellOnly:true});
+  await pharmacyBuildScreen(o.care_centers||{id:o.care_center_id}, null, o);
+}
+async function pharmacySaveOrderEdits(){
+  const o=PHARM_EDIT_ORDER; if(!o) return;
+  const ids=Object.keys(CART).filter(id=>CART[id]>0);
+  if(!ids.length) return toast('The order needs at least one medication. To cancel it, use Cancel order.', true);
+  const { data:fresh } = await db.from('orders').select('id,status,cc_approved').eq('id',o.id).maybeSingle();
+  if(!fresh || !['submitted','review'].includes(fresh.status)) return toast('This order has moved past review, so items can no longer be added here.', true);
+  const { data:cur } = await db.from('order_lines').select('*').eq('order_id',o.id);
+  const byMed={}; (cur||[]).forEach(l=>{ byMed[l.medication_id]=l; });
+  const nm=id=>{ const m=MEDS.find(x=>x.id===id)||{}; return (m.name||id)+(m.strength?' '+m.strength:''); };
+  const added=ids.filter(id=>!byMed[id]);
+  const changed=ids.filter(id=>byMed[id] && (+((byMed[id].approved_qty!=null)?byMed[id].approved_qty:byMed[id].requested_qty)||0)!==CART[id]);
+  const removed=(cur||[]).filter(l=>!(CART[l.medication_id]>0));
+  if(!added.length && !changed.length && !removed.length){ toast('No changes to save.'); return; }
+  const list=a=>a.map(x=>'<li>'+esc(x)+'</li>').join('');
+  const msg=`<div style="font-size:13.5px;line-height:1.5">Update <b>${esc(o.order_no)}</b>?</div>
+    ${added.length?`<div style="margin-top:8px"><b>Add</b><ul style="margin:4px 0 0 18px">${list(added.map(id=>nm(id)+' — '+CART[id]))}</ul></div>`:''}
+    ${changed.length?`<div style="margin-top:8px"><b>Change quantity</b><ul style="margin:4px 0 0 18px">${list(changed.map(id=>nm(id)+' → '+CART[id]))}</ul></div>`:''}
+    ${removed.length?`<div style="margin-top:8px;color:#c0392b"><b>Remove</b><ul style="margin:4px 0 0 18px">${list(removed.map(l=>nm(l.medication_id)))}</ul></div>`:''}
+    ${fresh.cc_approved?'<div class="note" style="margin-top:10px;font-size:12.5px">The care center already approved this order. Saving changes sends it back to them for approval.</div>':''}`;
+  if(!await uiConfirm(msg,{title:'Save changes to order',okText:'Save changes'})) return;
+  const btn=$('#submitOrder'); if(btn) btn.disabled=true;
+  try{
+    if(added.length){ const { error }=await db.from('order_lines').insert(added.map(id=>({order_id:o.id, medication_id:id, requested_qty:CART[id], approved_qty:CART[id]}))); if(error) throw error; }
+    for(const id of changed){ const { error }=await db.from('order_lines').update({ requested_qty:CART[id], approved_qty:CART[id] }).eq('id',byMed[id].id); if(error) throw error; }
+    if(removed.length){ const { error }=await db.from('order_lines').delete().in('id',removed.map(l=>l.id)); if(error) throw new Error(/permission|policy|denied/i.test(error.message)?'removing items is blocked by the database — run 32_order_lines_delete.sql in Supabase':error.message); }
+    if(fresh.cc_approved){ const { error }=await db.from('orders').update({ cc_approved:false }).eq('id',o.id); if(error) throw error; }
+    const note=['Pharmacy updated items after submission.', added.length?'Added: '+added.map(nm).join(', ')+'.':'', changed.length?'Qty changed: '+changed.map(nm).join(', ')+'.':'', removed.length?'Removed: '+removed.map(l=>nm(l.medication_id)).join(', ')+'.':''].filter(Boolean).join(' ');
+    try{ await db.from('order_events').insert({ order_id:o.id, type:'items_updated', actor_id:ME.userId, actor_name:ME.fullName, note }); }catch(e){}
+  }catch(e){ if(btn) btn.disabled=false; return toast('Could not save changes: '+(e.message||e), true); }
+  const id=o.id, ono=o.order_no, pEmail=o.purchaser_email||null, cc=CURRENT_CC;
+  PHARM_BUILD=false; PHARM_EDIT_ORDER=null; CART={}; NEW_TO_FORMULARY=new Set(); saveCart();
+  toast('Order '+ono+' updated.');
+  await openOrder(id);
+  // The approval packet changed — reopen it so the updated forms can be re-sent.
+  if(await uiConfirm('Items changed on '+esc(ono)+'. Open the approval packet to send the updated forms?',{title:'Re-send approval packet',okText:'Open approval packet'})){
+    sendApprovalEmail({ id, order_no:ono, purchaser_email:pEmail, care_center_id:cc&&cc.id, care_centers:{name:(cc&&cc.name)||''} });
+  }
 }
 // Resume a saved draft from the queue.
 async function pharmacyResumeDraft(id){
@@ -3148,6 +3289,7 @@ function renderPharmActions(o){
   if(approvedPlus && o.has_c2) mid.push(`<button class="btn-ghost btn-sm" data-doc="dea" style="color:var(--c2);border-color:#d9b3bb">◆ DEA 222</button>`);
   if(['shipped','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-doc="fedexpod" style="color:#4d148c;border-color:#d9c9ee">📦 FedEx proof of delivery</button>`);
   if(['shipped','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-doc="pod">🖨 Delivery confirmation</button>`);
+  if(o.created_by_pharmacy && ['submitted','review'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-editsubmitted title="Return to the order builder to add items that were missed. Existing items and details are kept.">← Back to order builder</button>`);
   if(o.created_by_pharmacy && !['cancelled','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-approvalemail style="color:var(--brand);border-color:#e0b4bc">📄 Approval packet / email</button>`);
   if(!['submitted','cancelled','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-back>← Back a step</button>`);
   // RIGHT: the primary next-step action
@@ -3178,6 +3320,7 @@ function renderPharmActions(o){
     else if(d==='fedexpod') openFedexPOD((o._shipment||{}).tracking);
   });
   const ae=host.querySelector('[data-approvalemail]'); if(ae) ae.onclick=()=>sendApprovalEmail(o);
+  const es=host.querySelector('[data-editsubmitted]'); if(es) es.onclick=()=>pharmacyEditSubmitted(o.id);
   const r2=host.querySelector('[data-req222]'); if(r2) r2.onclick=()=>requestDea222(o);
   const sh=host.querySelector('[data-ship]'); if(sh) sh.onclick=()=>markShipped(o);
   const bk=host.querySelector('[data-back]'); if(bk) bk.onclick=()=>stepBack(o);
