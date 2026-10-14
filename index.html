@@ -1285,9 +1285,13 @@ function wholesaleRequestDoc(o, rx){
   const present=classes.map(([key,label])=>({ label, lines:o.order_lines.filter(l=>schClass((l.medications||{}).schedule)===key) }))
                        .filter(x=>x.lines.length);
   const forms = present.length
-    ? present.map((x,i)=>section(x.lines, x.label, i===present.length-1)).join('')
+    ? present.map((x,i)=>`<div class="pgsep">Page ${i+1} of ${present.length} · ${esc(x.label)}</div>`+section(x.lines, x.label, i===present.length-1)).join('')
     : section(o.order_lines, 'All Items', true);
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Order Request ${esc(o.order_no)}</title><style>${docCss()} .page{padding:0.5in 0.55in}</style></head><body>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Order Request ${esc(o.order_no)}</title><style>${docCss()} .page{padding:0.5in 0.55in}
+   @media screen{ html,body{background:#e4e9ef} .page{box-sizing:border-box;width:8.5in;max-width:100%;min-height:11in;margin:0 auto 26px;background:#fff;box-shadow:0 2px 14px rgba(20,40,80,.18)}
+     .pgsep{width:8.5in;max-width:100%;margin:18px auto 6px;font-size:11.5px;font-weight:700;color:#5c6b78;display:flex;align-items:center;gap:10px}
+     .pgsep:after{content:"";flex:1;border-top:1px dashed #b7c2cf} }
+   @media print{ .pgsep{display:none} .page{box-shadow:none;margin:0} }</style></head><body>
    <div class="noprint" style="justify-content:flex-end"><button onclick="window.print()" style="font-size:15px;padding:12px 24px">🖨 Print ${present.length>1?('all '+present.length+' forms'):'form'}</button></div>
    ${forms}</body></html>`;
 }
@@ -1409,7 +1413,8 @@ function build222Doc(o, role){
  button{font-family:inherit;font-size:12.5px;font-weight:600;padding:9px 14px;border-radius:7px;border:1px solid #c4ceda;background:#f4f7fb;color:#26323f;cursor:pointer}
  button.primary{background:#2f6fd6;border-color:#2f6fd6;color:#fff}
  #stageWrap{flex:1 1 auto;padding:18px;overflow:auto;min-width:0}
- #stage{transform-origin:top left;transform:scale(var(--fit))}
+ #stage{transform-origin:top left;transform:scale(var(--fit));width:792pt;height:612pt;margin-right:calc(792pt * (var(--fit) - 1));margin-bottom:calc(612pt * (var(--fit) - 1))}
+ @media screen and (max-width:760px){ body{flex-direction:column} #bar{flex:none;width:auto;position:static;max-height:none;border-left:0;border-top:1px solid #d7dee7} }
  #page{position:relative;width:792pt;height:612pt;background:#fff;box-shadow:0 6px 30px rgba(20,40,80,.18)}
  #bg{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;display:none;transform:translate(calc(var(--gx)*1pt),calc(var(--gy)*1pt)) scale(var(--cs));transform-origin:0 0}
  body.showbg #bg{display:block}
@@ -1417,7 +1422,7 @@ function build222Doc(o, role){
  .f{position:absolute;color:#b3122b;font-family:Helvetica,Arial,sans-serif;line-height:1;white-space:nowrap;overflow:hidden}
  .f.cell{display:flex;align-items:center}.f.box{display:flex;align-items:center;justify-content:center;font-weight:700}
  body.role-supplier:not(.supfull) .pf{ opacity:.32; }
- body.role-purchaser .f.hx{ background:#fff59d; box-shadow:0 0 0 1px #fdd835; }   /* highlight the fields the hospice nurse must complete */
+ body.role-purchaser .f.hx{ background:rgba(255,242,0,.28); mix-blend-mode:multiply; }   /* translucent highlighter on the fields the hospice nurse must complete — form lines/text show through */
  #wm{position:absolute;inset:0;display:none;pointer-events:none;z-index:6;background-repeat:repeat;background-position:center;-webkit-print-color-adjust:exact;print-color-adjust:exact;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='190'%3E%3Ctext x='16' y='150' transform='rotate(-28 150 95)' font-family='Arial,Helvetica,sans-serif' font-size='30' font-weight='700' fill='%23d0002f' fill-opacity='0.13'%3ESAMPLE PREVIEW%3C/text%3E%3C/svg%3E")}
  body.proof #wm{display:block}                    /* watermark only when printing a proof on blank paper */
  @media print{
@@ -1426,13 +1431,13 @@ function build222Doc(o, role){
   #bar{display:none !important}
   html,body{background:#fff}
   #stageWrap{padding:0;overflow:visible}
-  #stage{transform:none !important}
+  #stage{transform:none !important;margin:0 !important}
   #page{box-shadow:none;position:absolute;left:0;top:0}
   #bg{display:none !important}
   body.proof #bg{display:block !important}
   .f{color:#000 !important}
   .f.hx{ background:transparent !important; box-shadow:none !important; }
-  body.hiprint .f.hx{ background:#fff59d !important; box-shadow:0 0 0 1px #fdd835 !important; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
+  body.hiprint .f.hx{ background:rgba(255,242,0,.28) !important; mix-blend-mode:multiply; -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
   body.role-supplier:not(.supfull) .pf{ display:none !important; }
   @page{size:11in 8.5in;margin:0}
  }
@@ -1629,68 +1634,94 @@ async function sendApprovalEmail(order){
 // the side-panel No. of Packages / Package Size boxes on the 222. "Download" builds the PDF from the
 // edited DOM (html2canvas → jsPDF). Edits are session-only — they are not saved back to the order.
 async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
-  const mailBody=body+'\n\nATTACHED: Order packet (Wholesale Order + DEA Form 222 preview). Please attach the downloaded PDF "Order-Packet-'+orderNo+'.pdf" to this email before sending.';
+  const mailBody=body+'\n\nATTACHED: Order packet (Wholesale Order / DEA Form 222 preview). Please attach the downloaded PDF "Order-Packet-'+orderNo+'.pdf" to this email before sending.';
   const mail='mailto:'+encodeURIComponent(pEmail||'')+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(mailBody);
   let o=null; try{ o=await fetchFull(orderId); }catch(e){}
   if(!o){ toast('Could not load the order to build the packet.', true); return; }
   const rx=o._rx||null;
   const hasC2=(dea222Items(o)||[]).length>0;
+  const deaFirst = hasC2 && !!o.created_by_pharmacy;      // pharmacy-generated: DEA 222 leads the packet
+  const nW = deaFirst ? '②' : '①', nD = deaFirst ? '①' : '②';
+  const wSec = `<div style="font-size:12px;font-weight:800;color:#37506e;margin:12px 0 4px">${nW} Wholesale Order Request <span style="font-weight:500;color:#8a95a1">— click text to edit · each category prints as its own page</span></div>
+    <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;height:460px;background:#e4e9ef"><iframe id="pkW" title="Wholesale Order" style="border:0;display:block;width:100%;min-width:816px;background:#e4e9ef"></iframe></div>`;
+  const dSec = hasC2 ? `<div style="font-size:12px;font-weight:800;color:#37506e;margin:12px 0 4px">${nD} DEA Form 222 preview <span style="font-weight:500;color:#8a95a1">— edit packages/size in the panel on the right</span></div>
+    <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:hidden;height:min(600px,70vh);background:#eef1f5"><iframe id="pkD" title="DEA 222" style="border:0;display:block;width:100%;height:100%;background:#eef1f5"></iframe></div>` : '';
+  const pkLabel = deaFirst ? 'DEA Form 222 preview + Wholesale Order' : (hasC2 ? 'Wholesale Order + DEA Form 222 preview' : 'Wholesale Order');
   const ov=modal(`<h3 style="margin:0 0 4px">Edit &amp; download approval packet — ${esc(orderNo||'')}</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:10px">Click any field on the form below to edit it.${hasC2?' On the DEA&nbsp;222, adjust <b>No. of Packages</b> / <b>Package Size</b> in the side panel.':''} Your changes apply only to the downloaded PDF — they are <b>not</b> saved to the order.</div>
-    <div style="font-size:12px;font-weight:800;color:#37506e;margin:6px 0 4px">① Wholesale Order Request <span style="font-weight:500;color:#8a95a1">— click text to edit</span></div>
-    <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;height:430px;background:#eef2f6"><iframe id="pkW" title="Wholesale Order" style="border:0;display:block;width:816px;background:#fff"></iframe></div>
-    ${hasC2?`<div style="font-size:12px;font-weight:800;color:#37506e;margin:12px 0 4px">② DEA Form 222 preview <span style="font-weight:500;color:#8a95a1">— edit packages/size in the side panel</span></div>
-    <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;height:480px;background:#eef2f6"><iframe id="pkD" title="DEA 222" style="border:0;display:block;width:1320px;height:900px;background:#fff"></iframe></div>`:''}
+    <div class="muted" style="font-size:12.5px;margin-bottom:4px">Click any field on the wholesale form to edit it.${hasC2?' On the DEA&nbsp;222, adjust <b>No. of Packages</b> / <b>Package Size</b> in the panel on the right.':''} Your changes apply only to the downloaded PDF — they are <b>not</b> saved to the order.</div>
+    ${deaFirst ? dSec + wSec : wSec + dSec}
     <div style="display:flex;align-items:center;gap:12px;margin-top:14px;flex-wrap:wrap">
       <button class="btn-primary" id="pkDl">📄 Download packet (PDF)</button>
       <button class="btn-ghost" id="pkReset" type="button" title="Discard your edits and reload both forms from the original order">↺ Undo edits</button>
       <a class="btn-ghost" id="pkMail" href="${mail}" target="_blank" rel="noopener" style="text-decoration:none;${pEmail?'':'opacity:.5;pointer-events:none'}">✉️ Open approval email${pEmail?'':' (no email on file)'}</a>
       <div id="pkStatus" class="muted" style="font-size:12.5px;flex:1;min-width:140px"></div>
     </div>
-    <div class="muted" style="font-size:11.5px;margin-top:8px">The PDF saves to your Downloads folder. In your email, choose “Attach file” and pick <b>Order-Packet-${esc(orderNo||'order')}.pdf</b>.</div>`, 1080);
+    <div class="muted" style="font-size:11.5px;margin-top:8px">The PDF (${pkLabel}) saves to your Downloads folder. In your email, choose “Attach file” and pick <b>Order-Packet-${esc(orderNo||'order')}.pdf</b>.</div>`, 1080);
   const st=ov.querySelector('#pkStatus'), dl=ov.querySelector('#pkDl');
   const pkW=ov.querySelector('#pkW'), pkD=ov.querySelector('#pkD');
-  // Wholesale form: editable in place.
+  // Wholesale form: editable in place, pages separated on screen.
   pkW.onload=function(){ try{ const d=pkW.contentDocument;
     d.querySelectorAll('.noprint').forEach(e=>e.remove());
     d.designMode='on';                                   // let the user click-edit any field
     const s=d.createElement('style'); s.textContent='::selection{background:#bcd8ff}'; d.head.appendChild(s);
-    pkW.style.height=Math.max(420,(d.body.scrollHeight||1000)+24)+'px';
+    pkW.style.height=Math.max(440,(d.documentElement.scrollHeight||d.body.scrollHeight||1000)+24)+'px';
   }catch(e){} };
   pkW.srcdoc=wholesaleRequestDoc(o, rx);
-  // DEA 222: keep its side panel (editable packages/size), show form image + yellow highlight.
+  // DEA 222: same layout as the self-order preview — form zoomed out to fit, editing panel on the right.
+  const BAR_W=340, PAGE_W=1056;                          // side panel px; 792pt form width in px
+  let userZoomed=false;
+  function fit222(){ try{ if(!pkD) return; const d=pkD.contentDocument; if(!d||!d.body) return;
+    if(userZoomed) return;
+    const w=pkD.clientWidth||900, stacked=w<=760;
+    const avail=(stacked?w:w-BAR_W)-40;
+    const f=Math.max(0.35, Math.min(0.9, avail/PAGE_W));
+    d.documentElement.style.setProperty('--fit', f.toFixed(3));
+    const z=d.getElementById('zoom'); if(z) z.value=f.toFixed(2);
+  }catch(e){} }
   if(pkD){
     pkD.onload=function(){ try{ const d=pkD.contentDocument;
       d.body.classList.add('proof');                     // show the form image + SAMPLE watermark
-      d.body.classList.add('hiprint');                   // keep the yellow hospice-field highlight
-      d.documentElement.style.setProperty('--fit','1');  // render the sheet 1:1 (pane scrolls)
+      d.body.classList.add('hiprint');                   // keep the highlighter on hospice fields
+      userZoomed=false; fit222();
+      const z=d.getElementById('zoom'); if(z) z.addEventListener('input',()=>{ userZoomed=true; });
     }catch(e){} };
     pkD.srcdoc=build222Doc(o,'purchaser');
+    if(window.ResizeObserver){ const ro=new ResizeObserver(()=>fit222()); ro.observe(pkD);
+      const mo=new MutationObserver(()=>{ if(!document.body.contains(pkD)){ ro.disconnect(); mo.disconnect(); } }); mo.observe(document.body,{childList:true,subtree:true}); }
   }
   async function gen(){
     dl.disabled=true; st.textContent='Building the packet from your edits…';
     try{
       await loadPdfLibs();
       const { jsPDF }=window.jspdf;
-      const pdf=new jsPDF({unit:'pt', format:'letter', orientation:'portrait'});
+      const pdf=new jsPDF({unit:'pt', format:'letter', orientation:(deaFirst?'landscape':'portrait')});
       let first=true;
       const wdoc=pkW.contentDocument;
       const wpages=[...(wdoc?wdoc.querySelectorAll('.page'):[])];
       if(!wpages.length) throw new Error('the wholesale form is still loading — try again in a moment');
-      for(const pg of wpages){
-        if(!first) pdf.addPage('letter','portrait'); first=false;
-        const c=await window.html2canvas(pg,{scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false});
-        _placeCanvas(pdf, c, 612, 792);
-      }
-      if(hasC2 && pkD){
-        const ddoc=pkD.contentDocument, page222=ddoc&&ddoc.getElementById('page');
-        if(page222){
-          ddoc.documentElement.style.setProperty('--fit','1');
-          if(!first) pdf.addPage([792,612],'landscape'); first=false;
-          const c2=await window.html2canvas(page222,{scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false});
-          _placeCanvas(pdf, c2, 792, 612);
+      async function addWholesale(){
+        for(const pg of wpages){
+          if(!first) pdf.addPage('letter','portrait'); first=false;
+          const c=await window.html2canvas(pg,{scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false});
+          _placeCanvas(pdf, c, 612, 792);
         }
       }
+      async function add222(){
+        if(!(hasC2 && pkD)) return;
+        const ddoc=pkD.contentDocument, page222=ddoc&&ddoc.getElementById('page');
+        if(!page222) return;
+        if(!first) pdf.addPage([792,612],'landscape'); first=false;
+        const dw=ddoc.defaultView;
+        // Capture the form at 1:1 in html2canvas's clone, so the on-screen zoom never changes.
+        const c2=await window.html2canvas(page222,{scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false,
+          windowWidth:1500, windowHeight:1000, scrollX:-(dw.scrollX||0), scrollY:-(dw.scrollY||0),
+          onclone:cd=>{ cd.documentElement.style.setProperty('--fit','1');
+            const stg=cd.getElementById('stage'); if(stg){ stg.style.transform='none'; stg.style.margin='0'; }
+            const wr=cd.getElementById('stageWrap'); if(wr) wr.style.overflow='visible'; }});
+        _placeCanvas(pdf, c2, 792, 612);
+      }
+      if(deaFirst){ await add222(); await addWholesale(); }
+      else { await addWholesale(); await add222(); }
       pdf.save('Order-Packet-'+(orderNo||'order')+'.pdf');
       dl.disabled=false; dl.textContent='📄 Download packet again';
       st.innerHTML='<span style="color:#12876a">✓ Downloaded with your edits. Now open the email and attach it.</span>';
