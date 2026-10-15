@@ -1455,17 +1455,23 @@ function wholesaleRequestDoc(o, rx){
 function invoiceDoc(o, rx){
   const cc=o.care_centers||{};
   const classes=[['nc','Non-Controlled','NC'],['c35','Schedule III–V','C35'],['c2','Schedule II (C-II)','C2']];
+  // Pharmacy-generated orders for care centers that allow partial quantities: show unit-based
+  // quantities exactly like the Wholesale Order Request ("20 TABLETS", "25 VIALS") and drop the Pack column.
+  const unitQty = !!o.created_by_pharmacy && !!cc.allow_partial_qty;
   const pages=classes.map(([key,label,tag])=>{
     const lines=o.order_lines.filter(l=>schClass((l.medications||{}).schedule)===key);
     if(!lines.length) return '';
-    const rows=lines.map(l=>{ const m=l.medications||{}; const ndcPlain=(l.ndc||'').replace(/-/g,''); const inForm=o._ccNdcs&&o._ccNdcs.has(ndcPlain); const star=(l.ndc_one_time&&!inForm)?' <span class="ndcnew" title="New / substituted NDC — not on this facility\'s formulary">NEW</span>':''; return `<tr><td>${esc(m.name)}<div class="s">${esc(m.strength||'')} · ${esc(m.form||'')}</div></td><td class="mono">${esc(ndcPlain||'—')}${star}</td><td class="r">${esc(packDisp(m))}</td><td class="r"><b>${pkgsOf(l,m)}</b></td></tr>`; }).join('');
+    const rows=lines.map(l=>{ const m=l.medications||{}; const ndcPlain=(l.ndc||'').replace(/-/g,''); const inForm=o._ccNdcs&&o._ccNdcs.has(ndcPlain); const star=(l.ndc_one_time&&!inForm)?' <span class="ndcnew" title="New / substituted NDC — not on this facility\'s formulary">NEW</span>':'';
+      const nameTd=`<td>${esc(m.name)}<div class="s">${esc(m.strength||'')} · ${esc(m.form||'')}</div></td><td class="mono">${esc(ndcPlain||'—')}${star}</td>`;
+      if(unitQty){ const q=(l.approved_qty!=null?l.approved_qty:(l.requested_qty||0)); return `<tr>${nameTd}<td class="r" style="text-transform:uppercase"><b>${esc(wqQty(m,q))}</b></td></tr>`; }
+      return `<tr>${nameTd}<td class="r">${esc(packDisp(m))}</td><td class="r"><b>${pkgsOf(l,m)}</b></td></tr>`; }).join('');
     return `<div class="page">
       <div class="hd"><div><img class="doclogo" src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="sm">${PHARMACY.addr}<br>Phone ${PHARMACY.phone} · Fax ${PHARMACY.fax}<br>DEA ${PHARMACY.dea}</div></div>
         <div class="rq"><h2>WHOLESALE INVOICE</h2><div class="sm">Invoice: <b>${esc(o.order_no)}-${tag}</b><br>Drug class: <b>${label}</b><br>Order: <b>${esc(o.order_no)}</b><br>Date: <span data-invdate>${nowStr()}</span></div></div></div>
       <div class="band ${key}">${key==='c2'?'◆ ':''}${label}</div>
       <div class="cols"><div class="box"><h3>Bill To / Ship To</h3>${esc(cc.name||'')}<br>${esc(cc.ship_to||'')}<br>Phone ${esc(cc.phone||'')}<br>Facility DEA ${esc(cc.facility_dea||'')}</div>
         <div class="box"><h3>Authorized Prescriber</h3>${esc(rxName(rx)||'—')}<br>NPI ${esc(rx&&rx.npi||'—')} · DEA ${esc(rx&&rx.dea||'—')}<br>Unit Manager: ${esc(cc.unit_mgr||'—')}</div></div>
-      <table><thead><tr><th>Medication</th><th>NDC</th><th class="r">Pack</th><th class="r">Qty</th></tr></thead><tbody>${rows}</tbody></table>
+      <table><thead><tr><th>Medication</th><th>NDC</th>${unitQty?'':'<th class="r">Pack</th>'}<th class="r">Qty</th></tr></thead><tbody>${rows}</tbody></table>
       <div class="sign"><div class="sigcell"><div class="sigink" data-sig></div><div class="l">Authorized signature</div></div><div class="sigcell"><div class="sigink" data-date></div><div class="l">Date</div></div></div>
       <div class="invfoot">${esc(PHARMACY.name)} · Invoice ${esc(o.order_no)}-${tag} · Quantities as approved by the pharmacy.</div>
     </div>`;
