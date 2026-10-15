@@ -1354,9 +1354,19 @@ b{color:var(--ink)}
 <button class="printbtn" onclick="window.print()">🖨 Print this guide</button>
 </body></html>`;}
 
+// Lines follow the saved DEA 222 line order (order_lines.dea_line_no) when the pharmacy has set one;
+// otherwise they keep their original order.
+function sortOrderLines(o){
+  if(!o||!Array.isArray(o.order_lines)) return o;
+  const idx=new Map(o.order_lines.map((l,i)=>[l,i]));
+  o.order_lines.sort((a,b)=>{ const x=(a.dea_line_no!=null)?+a.dea_line_no:Infinity, y=(b.dea_line_no!=null)?+b.dea_line_no:Infinity;
+    return (x-y) || (idx.get(a)-idx.get(b)); });
+  return o;
+}
 async function fetchFull(orderId){
   const { data:o, error } = await db.from('orders').select('*, care_centers(*), order_lines(*, medications(*))').eq('id',orderId).single();
   if(error){ toast(error.message); return null; }
+  sortOrderLines(o);
   let rx=null;
   if(o.prescriber_id){ const { data } = await db.from('prescribers').select('*').eq('id', o.prescriber_id).maybeSingle(); rx=data||null; }
   if(!rx){ const { data } = await db.from('prescribers').select('*').eq('care_center_id', o.care_center_id).order('is_primary',{ascending:false}).limit(1).maybeSingle(); rx=data||null; }
@@ -3216,6 +3226,7 @@ async function openOrder(id){
     .select('*, care_centers(*), order_lines(*, medications(name,strength,form,schedule,pack,package_size))')
     .eq('id',id).single();
   if(error){ b.innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
+  sortOrderLines(o);
   ACTIVE_ORDER=o;
   // Show the line items alphabetically by medication name.
   (o.order_lines||[]).sort((a,b)=>{ const ma=a.medications||{}, mb=b.medications||{}; return ((ma.name||'')+' '+(ma.strength||'')).localeCompare((mb.name||'')+' '+(mb.strength||''), undefined, {numeric:true}); });
@@ -3279,6 +3290,10 @@ async function openOrder(id){
   const qtyEditable = ['approved','dea','ordered'].includes(o.status);   // editable from Approve until the order ships
   const ndcEditable = ['submitted','review','approved','dea'].includes(o.status);
   const ship=o._shipment;
+  // Pharmacy-generated orders: the pharmacy can re-arrange the C-II rows to match the line order on the
+  // DEA 222 the hospice actually sends, so NDCs land on the right line of the supplier 222.
+  const c2Lines=o.order_lines.filter(l=>(l.medications||{}).schedule==='CII');
+  const canReorder = !!o.created_by_pharmacy && c2Lines.length>1 && !['complete','cancelled'].includes(o.status);
   b.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px">
       <button class="btn-ghost btn-sm" id="back">← Back to queue</button>
@@ -3301,11 +3316,17 @@ async function openOrder(id){
       <div id="pharmActions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:16px 0 4px"></div>
       ${o.has_c2?`<div class="badge b-c2" style="display:block;margin:6px 0 2px;padding:10px 12px;line-height:1.5">Schedule II present — after approval, request the hospice's DEA Form 222. Do not place the wholesale order until the 222 is received.${o.dea222_received?' <b>✔ Hospice reports the DEA 222 has been mailed.</b>':''}</div>`:''}
       <table class="lines" style="margin-top:10px">
-        <thead><tr><th>Medication</th><th>Sched</th><th>NDC</th>${qtyStage?'<th style="text-align:right">Requested</th><th style="text-align:right">Approve Qty</th><th style="text-align:right">Packages</th>':''}</tr></thead>
+        ${canReorder?`<div class="muted" style="font-size:12px;margin:2px 0 -4px">◆ <b>DEA 222 line order:</b> use ▲ ▼ to match the order of items on the 222 the hospice sent. The supplier copy of the 222 follows this order.</div>`:''}
+        <thead><tr>${canReorder?'<th style="width:74px">222 line</th>':''}<th>Medication</th><th>Sched</th><th>NDC</th>${qtyStage?'<th style="text-align:right">Requested</th><th style="text-align:right">Approve Qty</th><th style="text-align:right">Packages</th>':''}</tr></thead>
         <tbody>${o.order_lines.map((l,i)=>{ const m=l.medications||{}; const inc=pkgSize(m); const _aq=(l.approved_qty||0); const pk=(inc>1 && _aq%inc===0)?(_aq/inc):_aq; const diff=(l.approved_qty!=null && l.approved_qty!==l.requested_qty);
           const postAdj=(l.cc_approved_qty!=null && l.approved_qty!==l.cc_approved_qty);   // re-adjusted after the hospice approved
           const postAdjNote='<div class="postadj-note" data-postadj="'+i+'" style="font-size:10px;color:#8a5a12;font-weight:800">'+(postAdj?('▲ changed after approval — hospice approved '+l.cc_approved_qty):'')+'</div>';
-          return `<tr>
+          const isC2=m.schedule==='CII';
+          const ordCell = canReorder ? (isC2
+            ? `<td style="white-space:nowrap"><span class="l222no" style="display:inline-block;min-width:16px;font-weight:800;color:#8b1a2b">${c2Lines.indexOf(l)+1}</span>
+                 <button type="button" class="btn-ghost btn-sm" data-lmove="-1" title="Move up on the DEA 222" style="padding:2px 7px;margin-left:4px">▲</button><button type="button" class="btn-ghost btn-sm" data-lmove="1" title="Move down on the DEA 222" style="padding:2px 7px;margin-left:2px">▼</button></td>`
+            : '<td class="muted" style="font-size:11px">—</td>') : '';
+          return `<tr data-lineid="${l.id}"${isC2?' data-c2="1"':''}>${ordCell}
             <td><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(packShort(m))}</div></td>
             <td>${schBadge(m.schedule)}</td>
             <td>${ndcEditable?(()=>{ const own=(ndcDir[l.medication_id]||[]); const lbl=[m.strength,m.form].filter(Boolean).join(' · '); const hasDir=ndcDirAll.length>0; return `<input data-ndc="${i}" ${hasDir?'list="ndcDirList"':''} value="${esc(l.ndc||'')}" placeholder="${hasDir?'select or type NDC…':'type NDC…'}" style="width:170px;font-family:var(--mono);font-size:12px">${hasDir?`<div class="muted" style="font-size:10.5px">${own.length?own.length+' on file for this drug · ':''}${esc(lbl)}</div>`:''}`; })():`<span class="mono" style="font-family:var(--mono);font-size:12px">${esc(l.ndc||'—')}</span>`}${l.ndc_one_time?'<div class="muted" style="font-size:10.5px;color:var(--amber)">↺ one-time (this order)</div>':''}</td>
@@ -3331,6 +3352,31 @@ async function openOrder(id){
     ${approvedPlus0?`<div id="ffPanel" style="flex:0 0 330px;max-width:330px;min-width:280px">${fulfillmentPanel(o)}</div>`:''}
     </div>`;
   $('#back').onclick=renderStaff;
+  if(canReorder){
+    const tbody=b.querySelector('table.lines tbody');
+    const renumber=()=>{ let k=0; tbody.querySelectorAll('tr[data-c2]').forEach(tr=>{ const s=tr.querySelector('.l222no'); if(s) s.textContent=++k; }); };
+    let saving=Promise.resolve();
+    const persist=()=>{
+      const ids=[...tbody.querySelectorAll('tr[data-lineid]')].map(tr=>tr.dataset.lineid);
+      // Row inputs on this screen look lines up by their original index, so only update the numbers in place.
+      const byId=new Map(o.order_lines.map(l=>[String(l.id),l])); ids.forEach((id,i)=>{ const l=byId.get(id); if(l) l.dea_line_no=i+1; });
+      saving=saving.then(async()=>{
+        for(let i=0;i<ids.length;i++){
+          const { error }=await db.from('order_lines').update({ dea_line_no:i+1 }).eq('id',ids[i]);
+          if(error){ toast(/dea_line_no/.test(error.message)?'Could not save the line order — run 59_order_lines_dea_line_no.sql in Supabase first.':'Could not save the line order: '+error.message, true); return; }
+        }
+        toast('DEA 222 line order saved.');
+      });
+    };
+    tbody.querySelectorAll('[data-lmove]').forEach(btn=>btn.onclick=()=>{
+      const tr=btn.closest('tr'), dir=+btn.dataset.lmove;
+      const c2=[...tbody.querySelectorAll('tr[data-c2]')], i=c2.indexOf(tr), j=i+dir;
+      if(j<0||j>=c2.length) return;
+      const other=c2[j];
+      if(dir<0) other.before(tr); else other.after(tr);
+      renumber(); persist();
+    });
+  }
   { const d=$('#delOrder'); if(d) d.onclick=()=>deleteOrder(o.id); }
   { const d=$('[data-shipdeliver]'); if(d) d.onclick=()=>logDelivery(o); }
   { const d=$('[data-shipdoc]'); if(d) d.onclick=()=>printDelivery(o.id); }
