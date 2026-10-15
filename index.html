@@ -1660,9 +1660,11 @@ function render(){
   var H=CFG.header,C=CFG.cols,R=CFG.rows, sup=(MODEL.role==='supplier');
   (function(){var s=MODEL.supplier.dea||'',bw=H.supplierDea.boxW,fs=9.5;s.toUpperCase().split('').slice(0,H.supplierDea.boxes).forEach(function(c,k){el('box pf hx',H.supplierDea.left+k*bw,H.supplierDea.cy-fs*0.62,bw,fs*1.24,c,fs);});})();
   function lineField(f,val,fs,extra){el('cell pf'+(extra?' '+extra:''),f.x,f.lineY-fs-1.5,f.w,fs+2,val,fs,'flex-start');}
-  lineField(H.businessName,MODEL.supplier.name,9,'hx');
-  lineField(H.streetAddress,MODEL.supplier.addr,9,'hx');
-  lineField(H.cityStateZip,MODEL.supplier.city,9,'hx');
+  // Part 2 supplier lines sit a little lower so the name clears the "PART 2" heading above it.
+  function supField(f,val){ const fs=8.5, dy=2.5; el('cell pf hx',f.x,f.lineY-fs-1.5+dy,f.w,fs+2,val,fs,'flex-start'); }
+  supField(H.businessName,MODEL.supplier.name);
+  supField(H.streetAddress,MODEL.supplier.addr);
+  supField(H.cityStateZip,MODEL.supplier.city);
   var nameTitle=[MODEL.printName,MODEL.title].filter(Boolean).join(', ');
   lineField(H.printName,nameTitle,10,'hx');
   lineField(H.date,MODEL.date,10,'hx');
