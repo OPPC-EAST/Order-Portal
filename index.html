@@ -75,6 +75,13 @@
   .cart-body{max-height:calc(100vh - 260px);overflow:auto;padding:6px 14px}
   .cart-line{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line);font-size:13px}
   .cart-foot{padding:14px 16px;border-top:1px solid var(--line)}
+  .qty.qty-sm button{padding:3px 8px;font-size:13px}
+  .qty.qty-sm input{width:46px;padding:4px 2px;font-size:12.5px}
+  .fav{border:none;background:none;padding:2px 4px;font-size:20px;line-height:1;cursor:pointer;color:#b7c0cb;flex:none}
+  .fav:hover{color:#e0607a}
+  .fav.on{color:#e0245e}
+  .favbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);background:#fbf6f8}
+  .favpick{width:17px;height:17px;flex:none;accent-color:var(--brand)}
 
   .badge{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px}
   .b-c2{background:var(--c2-tint);border:1px solid #7a2233;color:var(--c2)}
@@ -2193,6 +2200,74 @@ async function renderOrdering(){
   }
 }
 
+// ---- Shared cart quantity rules (used by the formulary list, the cart, and favorites) ----
+function cartFreeQty(){ return PHARM_BUILD || !!(CURRENT_CC && CURRENT_CC.allow_partial_qty); }
+function cartStep(id){ const m=MEDS.find(x=>x.id===id)||{}; return cartFreeQty()?1:pkgSize(m); }
+// Round a typed quantity to the allowed multiple (unless free quantity applies).
+function normCartQty(id, v, quiet){
+  v=Math.max(0, parseInt(v)||0);
+  const inc=pkgSize(MEDS.find(x=>x.id===id)||{});
+  if(!cartFreeQty() && inc>1 && v%inc!==0){ v=Math.max(inc, Math.round(v/inc)*inc); if(!quiet) toast('Rounded to multiples of '+inc); }
+  return v;
+}
+// Set one item's cart quantity and keep the list + cart in step. New-to-formulary items still prompt.
+function setCartQty(id, v, opts){
+  v=Math.max(0, parseInt(v)||0);
+  const had=CART[id]>0;
+  if(v>0) CART[id]=v; else { delete CART[id]; NEW_TO_FORMULARY.delete(id); }
+  if(v>0 && typeof FAV_PLAN!=='undefined') FAV_PLAN[id]=v;   // favorites view starts from the cart quantity
+  saveCart();
+  const li=document.querySelector('#medList .qty[data-med="'+id+'"] [data-inp]'); if(li) li.value=v;
+  const pi=document.querySelector('#medList .qty[data-plan="'+id+'"] [data-inp]'); if(pi && v>0) pi.value=v;
+  drawCart();
+  if(!(opts&&opts.noPrompt) && v>0 && !had && !STOCKED.has(id) && !NEW_TO_FORMULARY.has(id)) newFormularyPrompt([id]);
+}
+// ---- Medication favorites: per user, saved in Supabase (med_favorites) with a browser fallback ----
+let FAVS=new Set(), FAV_MODE=null, FAV_PLAN={}, FAV_PICK=new Set();
+const FAV_LS='oppc_med_favs_v1';
+function favLocalGet(){ try{ const all=JSON.parse(localStorage.getItem(FAV_LS)||'{}'); return new Set(all[ME&&ME.userId]||[]); }catch(e){ return new Set(); } }
+function favLocalPut(){ try{ const all=JSON.parse(localStorage.getItem(FAV_LS)||'{}'); all[ME&&ME.userId]=[...FAVS]; localStorage.setItem(FAV_LS, JSON.stringify(all)); }catch(e){} }
+async function loadFavs(){
+  if(!ME||!ME.userId) return;
+  if(FAV_MODE && FAV_MODE.user===ME.userId) return;
+  try{
+    const { data, error }=await db.from('med_favorites').select('medication_id').eq('user_id', ME.userId);
+    if(error) throw error;
+    FAVS=new Set((data||[]).map(r=>String(r.medication_id)));
+    // one-time move of favorites saved in this browser before the table existed
+    const loc=favLocalGet(); const missing=[...loc].filter(id=>!FAVS.has(id));
+    if(missing.length){ const { error:e2 }=await db.from('med_favorites').upsert(missing.map(id=>({user_id:ME.userId, medication_id:id})),{onConflict:'user_id,medication_id'}); if(!e2) missing.forEach(id=>FAVS.add(id)); }
+    FAV_MODE={user:ME.userId, db:true};
+  }catch(e){ FAVS=favLocalGet(); FAV_MODE={user:ME.userId, db:false}; }
+}
+async function toggleFav(id){
+  const on=!FAVS.has(id);
+  if(on) FAVS.add(id); else { FAVS.delete(id); FAV_PICK.delete(id); }
+  favLocalPut();
+  document.querySelectorAll('.fav[data-fav="'+id+'"]').forEach(b=>{ b.classList.toggle('on',on); b.textContent=on?'♥':'♡'; b.title=on?'Remove from favorites':'Add to favorites'; b.setAttribute('aria-pressed',on); });
+  if(($('#schFilter')||{}).value==='fav') drawMeds();
+  if(FAV_MODE&&FAV_MODE.db){
+    const r = on ? await db.from('med_favorites').upsert({user_id:ME.userId, medication_id:id},{onConflict:'user_id,medication_id'})
+                 : await db.from('med_favorites').delete().eq('user_id',ME.userId).eq('medication_id',id);
+    if(r&&r.error) toast('Favorite saved in this browser only ('+r.error.message+').', true);
+  }
+}
+// Add favorites to the cart using the quantities chosen on the Favorites view (respects rounding + prompts).
+function addFavsToCart(ids){
+  ids=ids.filter(id=>!CC_DEACTIVATED.has(id) && MEDS.some(m=>m.id===id));
+  if(!ids.length) return toast('Select at least one favorite to add.', true);
+  const fresh=[]; let n=0;
+  ids.forEach(id=>{
+    const q=normCartQty(id, FAV_PLAN[id]!=null?FAV_PLAN[id]:(CART[id]||cartStep(id)), true);
+    if(q<=0) return;
+    const had=CART[id]>0; setCartQty(id,q,{noPrompt:true}); n++;
+    if(!had && !STOCKED.has(id) && !NEW_TO_FORMULARY.has(id)) fresh.push(id);
+  });
+  FAV_PICK=new Set(); drawMeds();
+  if(!n) return toast('Enter a quantity above 0 for the items you want to add.', true);
+  toast(n+' favorite'+(n!==1?'s':'')+' added — review quantities in your cart before checkout.');
+  if(fresh.length) newFormularyPrompt(fresh);
+}
 function renderCatalog(){
   const host=$('#htBody');
   host.innerHTML = `
@@ -2205,6 +2280,7 @@ function renderCatalog(){
             <option value="CII">Schedule II</option>
             <option value="c35">Schedule III–V</option>
             <option value="nc">Non-controlled</option>
+            <option value="fav">♥ FAVORITES</option>
           </select>
         </div>
         <div class="card" id="medList"></div>
@@ -2215,16 +2291,19 @@ function renderCatalog(){
         <div class="cart-foot" id="cartFoot"></div>
       </div>
     </div>`;
-  $('#search').oninput=drawMeds; $('#schFilter').onchange=drawMeds;
+  $('#search').oninput=drawMeds; $('#schFilter').onchange=()=>{ FAV_PICK=new Set(); drawMeds(); };
   drawMeds(); drawCart();
+  loadFavs().then(()=>{ if($('#medList')) drawMeds(); });
 }
 function drawMeds(){
   // Free quantity = pharmacy building, OR this care center allows partial (below-package) quantities.
-  const freeQty = PHARM_BUILD || !!(CURRENT_CC && CURRENT_CC.allow_partial_qty);
+  const freeQty = cartFreeQty();
   const q=($('#search')?.value||'').toLowerCase().trim();
   const f=$('#schFilter')?.value||'all';
+  const favView = f==='fav';
   let items=MEDS.filter(m=>{
     if(CC_DEACTIVATED.has(m.id)) return false;   // turned off for this care center's formulary
+    if(favView && !FAVS.has(m.id)) return false;
     if(f==='CII'&&m.schedule!=='CII') return false;
     if(f==='c35'&&!['CTRL','CIII','CIV','CV'].includes(m.schedule)) return false;
     if(f==='nc'&&!['RX','OTC'].includes(m.schedule)) return false;
@@ -2242,11 +2321,43 @@ function drawMeds(){
     return (a.name+' '+(a.strength||'')).localeCompare(b.name+' '+(b.strength||''), undefined, {numeric:true});
   });
   const host=$('#medList');
-  if(!items.length){ host.innerHTML='<div class="empty">No medications match.</div>'; return; }
-  host.innerHTML = items.map(m=>{
+  if(!items.length){
+    host.innerHTML = favView
+      ? (FAVS.size && q ? '<div class="empty">No favorites match your search.</div>'
+         : '<div class="empty" style="padding:32px 20px;line-height:1.6">♡ <b>No favorites yet.</b><br>Tap the heart next to any medication to save it here for quick ordering.<br><span class="muted" style="font-size:12.5px">Favoriting doesn’t add anything to your order.</span></div>')
+      : '<div class="empty">No medications match.</div>';
+    return;
+  }
+  const heart=m=>{ const on=FAVS.has(m.id); return `<button type="button" class="fav${on?' on':''}" data-fav="${m.id}" title="${on?'Remove from favorites':'Add to favorites'}" aria-pressed="${on}">${on?'♥':'♡'}</button>`; };
+  const favBar = favView ? `<div class="favbar">
+      <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;cursor:pointer"><input type="checkbox" class="favpick" id="favAll"> Select all</label>
+      <span class="muted" style="font-size:12px;flex:1;min-width:160px">Set a quantity for each favorite, then add them to your order.</span>
+      <button type="button" class="btn-ghost btn-sm" id="favAddSel" style="text-transform:uppercase">Add selected (<span id="favSelN">0</span>)</button>
+      <button type="button" class="btn-primary btn-sm" id="favAddAll" style="text-transform:uppercase">Add all medications</button></div>` : '';
+  host.innerHTML = favBar + items.map(m=>{
     const inc=pkgSize(m); const qn=CART[m.id]||0;
     const notStocked = !STOCKED.has(m.id);
+    if(favView){
+      if(FAV_PLAN[m.id]==null) FAV_PLAN[m.id]=qn||cartStep(m.id);
+      return `<div class="med-row">
+      <input type="checkbox" class="favpick" data-pick="${m.id}"${FAV_PICK.has(m.id)?' checked':''} title="Select">
+      ${heart(m)}
+      <div class="med-name">
+        <div class="name"><b>${esc(m.name)}</b> <span class="muted" style="font-weight:500">${esc(m.strength||'')}</span> <b>${esc(m.form||'')}</b></div>
+        <div class="sub">${schBadge(m.schedule)} <span class="muted">${esc(packLabel(m))}</span>${inc>1&&!freeQty?`<span class="badge" style="background:#eef4fb;border:1px solid #cfe0f0;color:#2c5d84">order in multiples of ${inc}</span>`:''}${qn?`<span class="badge" style="background:#e9f6ef;border:1px solid #bfe3cf;color:#1d7a4a">✓ ${qn} in cart</span>`:''}${notStocked?`<span class="badge" style="background:#fdecdd;border:1px solid #f0d3b0;color:#b4520a">✦ new to your formulary</span>`:''}</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
+        <span class="muted" style="font-size:10.5px;font-weight:700;letter-spacing:.03em">QTY TO ADD</span>
+        <div class="qty" data-plan="${m.id}">
+          <button data-act="dec">−</button>
+          <input type="number" min="0" step="${freeQty?1:inc}" value="${FAV_PLAN[m.id]}" data-inp>
+          <button data-act="inc">+</button>
+        </div>
+      </div>
+    </div>`;
+    }
     return `<div class="med-row">
+      ${heart(m)}
       <div class="med-name">
         <div class="name"><b>${esc(m.name)}</b> <span class="muted" style="font-weight:500">${esc(m.strength||'')}</span> <b>${esc(m.form||'')}</b></div>
         <div class="sub">${schBadge(m.schedule)} <span class="muted">${esc(packLabel(m))}</span>${inc>1&&!freeQty?`<span class="badge" style="background:#eef4fb;border:1px solid #cfe0f0;color:#2c5d84">order in multiples of ${inc}</span>`:''}${notStocked?`<span class="badge" style="background:#fdecdd;border:1px solid #f0d3b0;color:#b4520a" title="Not currently stocked in your Omnicell">✦ new to your formulary</span>`:''}${qn?`<span class="badge b-nc">✓ ${qn} in cart</span>`:''}</div>
@@ -2258,16 +2369,30 @@ function drawMeds(){
       </div>
     </div>`;
   }).join('');
-  host.querySelectorAll('.qty').forEach(q=>{
-    const id=q.dataset.med, inc=pkgSize(MEDS.find(m=>m.id===id)||{});
-    const inp=q.querySelector('[data-inp]');
-    const set=v=>{ v=Math.max(0,v); const had=CART[id]>0; if(v>0)CART[id]=v; else delete CART[id]; inp.value=v; saveCart(); drawCart();
-      if(v>0 && !had && !STOCKED.has(id) && !NEW_TO_FORMULARY.has(id)) newFormularyPrompt([id]); };
-    const stepInc = freeQty ? 1 : inc;   // free quantity when pharmacy-building or the CC allows partials
-    q.querySelector('[data-act=inc]').onclick=()=>set((parseInt(inp.value)||0)+stepInc);
-    q.querySelector('[data-act=dec]').onclick=()=>set(Math.max(0,(parseInt(inp.value)||0)-stepInc));
-    inp.onchange=()=>{ let v=parseInt(inp.value)||0; if(!freeQty && inc>1 && v%inc!==0){ v=Math.round(v/inc)*inc; toast('Rounded to multiples of '+inc); } set(v); };
+  host.querySelectorAll('.fav').forEach(b=>b.onclick=()=>toggleFav(b.dataset.fav));
+  host.querySelectorAll('.qty[data-med]').forEach(q=>{
+    const id=q.dataset.med, inp=q.querySelector('[data-inp]');
+    const stepInc = cartStep(id);   // free quantity when pharmacy-building or the CC allows partials
+    q.querySelector('[data-act=inc]').onclick=()=>setCartQty(id,(parseInt(inp.value)||0)+stepInc);
+    q.querySelector('[data-act=dec]').onclick=()=>setCartQty(id,Math.max(0,(parseInt(inp.value)||0)-stepInc));
+    inp.onchange=()=>setCartQty(id, normCartQty(id, inp.value));
   });
+  if(favView){
+    const ids=items.map(m=>m.id);
+    const selN=()=>{ const n=ids.filter(id=>FAV_PICK.has(id)).length; const e=$('#favSelN'); if(e) e.textContent=n; const a=$('#favAll'); if(a){ a.checked=n>0&&n===ids.length; a.indeterminate=n>0&&n<ids.length; } };
+    host.querySelectorAll('[data-pick]').forEach(c=>c.onchange=()=>{ if(c.checked) FAV_PICK.add(c.dataset.pick); else FAV_PICK.delete(c.dataset.pick); selN(); });
+    $('#favAll').onchange=e=>{ ids.forEach(id=>{ if(e.target.checked) FAV_PICK.add(id); else FAV_PICK.delete(id); }); host.querySelectorAll('[data-pick]').forEach(c=>c.checked=e.target.checked); selN(); };
+    host.querySelectorAll('.qty[data-plan]').forEach(q=>{
+      const id=q.dataset.plan, inp=q.querySelector('[data-inp]'), st=cartStep(id);
+      const put=v=>{ FAV_PLAN[id]=Math.max(0,v); inp.value=FAV_PLAN[id]; };
+      q.querySelector('[data-act=inc]').onclick=()=>put((parseInt(inp.value)||0)+st);
+      q.querySelector('[data-act=dec]').onclick=()=>put(Math.max(0,(parseInt(inp.value)||0)-st));
+      inp.onchange=()=>put(normCartQty(id, inp.value));
+    });
+    $('#favAddSel').onclick=()=>addFavsToCart(ids.filter(id=>FAV_PICK.has(id)));
+    $('#favAddAll').onclick=()=>addFavsToCart(ids);
+    selN();
+  }
 }
 function newFormularyPrompt(ids){
   const many=ids.length>1;
@@ -2318,7 +2443,7 @@ function drawCart(){
   if(!ids.length){ body.innerHTML='<div class="empty" style="padding:24px">Your cart is empty.</div>'; foot.innerHTML=''; return; }
   body.innerHTML = ids.map(id=>{ const m=MEDS.find(x=>x.id===id)||{}; return `<div class="cart-line">
       <div style="flex:1">${esc(m.name)} <span class="muted">${esc(m.strength||'')} ${esc(m.form||'')}</span>${NEW_TO_FORMULARY.has(id)?' <span class="muted" style="color:var(--brand);font-weight:600;font-size:11px">✦ new</span>':''}</div>
-      <b>${CART[id]}</b><button class="btn-ghost btn-sm" data-rm="${id}">✕</button></div>`;}).join('');
+      <div class="qty qty-sm" data-cq="${id}"><button data-act="dec" title="Decrease">−</button><input type="number" min="0" step="${cartStep(id)}" value="${CART[id]}" data-inp aria-label="Quantity"><button data-act="inc" title="Increase">+</button></div><button class="btn-ghost btn-sm" data-rm="${id}">✕</button></div>`;}).join('');
   const hasC2 = ids.some(id=>(MEDS.find(m=>m.id===id)||{}).schedule==='CII');
   foot.innerHTML = `${hasC2?'<div class="badge b-c2" style="margin-bottom:10px">◆ Contains Schedule II — a DEA 222 step will follow approval</div>':''}
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
@@ -2331,6 +2456,13 @@ function drawCart(){
     <div style="font-size:11.5px;text-align:center;margin-top:8px;color:var(--brand-dk);background:var(--brand-tint);border-radius:8px;padding:6px 8px">🚚 Est. ship date: <b>${shipMondayLabel()}</b> <span class="muted" style="color:var(--brand-dk)">(if approved by ${esc(cutoffLabel())} CST)</span></div>
     <div class="muted" id="draftStatus" style="font-size:11px;text-align:center;margin-top:8px">${PHARM_BUILD?(PHARM_EDIT_ORDER?'Existing items and details are kept. Add what was missed, then save changes.':'💾 Keep building — your cart is saved to Drafts automatically when you leave this screen, and you can resume anytime.'):'💾 Saved automatically'}</div>`;
   body.querySelectorAll('[data-rm]').forEach(x=>x.onclick=()=>{ delete CART[x.dataset.rm]; saveCart(); drawMeds(); drawCart(); });
+  body.querySelectorAll('.qty[data-cq]').forEach(q=>{
+    const id=q.dataset.cq, inp=q.querySelector('[data-inp]'), st=cartStep(id);
+    const done=v=>{ const was=CART[id]>0; setCartQty(id,v); if(!(CART[id]>0) && was && ($('#schFilter')||{}).value==='fav') drawMeds(); };
+    q.querySelector('[data-act=inc]').onclick=()=>done((parseInt(inp.value)||0)+st);
+    q.querySelector('[data-act=dec]').onclick=()=>done(Math.max(0,(parseInt(inp.value)||0)-st));
+    inp.onchange=()=>done(normCartQty(id, inp.value));
+  });
   const cl=$('#cartClear'); if(cl) cl.onclick=async()=>{ if(await uiConfirm('Clear all items from this cart?',{title:'Clear cart',okText:'Clear',danger:true})){ CART={}; saveCart(); drawMeds(); drawCart(); } };
   $('#submitOrder').onclick = PHARM_BUILD ? (PHARM_EDIT_ORDER ? pharmacySaveOrderEdits : pharmacySubmitFromCart) : openCheckout;
   { const ctd=$('#cartToDraft'); if(ctd) ctd.onclick=()=>{ if(stashCartAsDraft()){ toast('Cart saved to Pending Carts — starting a new order.'); renderOrdering(); } }; }
