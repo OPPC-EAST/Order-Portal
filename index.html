@@ -944,7 +944,69 @@ function genPackDesc(qty, unitSize, uom, ptype, form){
 function packShort(m){ return ((m&&m.pack)||'').trim(); }
 function packLabel(m){ return ((m&&m.pack)||'').trim(); }
 let PKG_TYPES_EXTRA=[];
-async function loadPkgTypes(){ try{ const {data}=await db.from('package_types').select('name').order('name'); PKG_TYPES_EXTRA=(data||[]).map(r=>r.name); }catch(e){ PKG_TYPES_EXTRA=[]; } }
+// Package Type list. The 4 built-ins live in code until someone edits the list; the first edit copies
+// them into the package_types table (plus a hidden marker row) so every option can be renamed/deleted.
+const PKG_DEFAULTS=['Vials','Tablets','Patches','Bottle'], PKG_SEED_MARK='~defaults_seeded';
+let PKG_SEEDED=false;
+async function loadPkgTypes(){ try{ const {data}=await db.from('package_types').select('name').order('name'); const n=(data||[]).map(r=>r.name);
+  PKG_SEEDED=n.includes(PKG_SEED_MARK); PKG_TYPES_EXTRA=n.filter(x=>x!==PKG_SEED_MARK); }catch(e){ PKG_TYPES_EXTRA=[]; } }
+function pkgTypeList(){ return PKG_SEEDED ? PKG_TYPES_EXTRA.slice() : Array.from(new Set(PKG_DEFAULTS.concat(PKG_TYPES_EXTRA||[]))); }
+async function pkgEnsureSeeded(){
+  if(PKG_SEEDED) return;
+  const rows=PKG_DEFAULTS.concat([PKG_SEED_MARK]).map(name=>({name}));
+  const { error }=await db.from('package_types').upsert(rows,{onConflict:'name'}); if(error) throw error;
+  PKG_SEEDED=true; PKG_TYPES_EXTRA=Array.from(new Set(PKG_DEFAULTS.concat(PKG_TYPES_EXTRA)));
+}
+// Manage the Package Type list: rename (fixes spelling everywhere it's used) or delete options.
+async function managePkgTypes(onChange){
+  await loadPkgTypes();
+  const { data:used }=await db.from('medications').select('package_type');
+  const cnt={}; (used||[]).forEach(r=>{ const t=(r.package_type||'').trim(); if(t) cnt[t]=(cnt[t]||0)+1; });
+  const list=pkgTypeList();
+  const ov=modal(`<h3 style="margin:0 0 4px">Edit package types</h3>
+    <div class="muted" style="font-size:12.5px;margin-bottom:12px">Fix a spelling by editing the name and clicking <b>Save</b> — every drug using it is updated too. Deleting an option removes it from the list only; drugs already using it keep their value.</div>
+    <div id="ptList">${list.length?list.map((t,i)=>`<div style="display:flex;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid #eef1f5">
+        <input data-pti="${i}" value="${esc(t)}" style="flex:1">
+        <span class="muted" style="font-size:12px;min-width:62px;text-align:right">${cnt[t]||0} drug${(cnt[t]||0)===1?'':'s'}</span>
+        <button type="button" class="btn-ghost btn-sm" data-ptsave="${i}">Save</button>
+        <button type="button" class="btn-ghost btn-sm" data-ptdel="${i}" style="color:#c0392b;border-color:#e0b4bc">🗑</button></div>`).join(''):'<div class="muted" style="padding:10px 0">The list is empty. Use “Custom…” → “Save to list” to add a type.</div>'}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px"><button class="btn-primary" data-ptdone>Done</button></div>`, 520);
+  ov.querySelector('[data-ptdone]').onclick=()=>ov.remove();
+  const fail=e=>toast('Could not update the list: '+(e.message||e)+' — run 53_package_types.sql in Supabase (needs insert/delete permission).', true);
+  ov.querySelectorAll('[data-ptsave]').forEach(b=>b.onclick=async()=>{
+    const i=+b.dataset.ptsave, oldN=list[i]; let newN=ov.querySelector(`[data-pti="${i}"]`).value.trim();
+    if(!newN) return toast('Type a name, or use 🗑 to delete it.', true);
+    if(newN===oldN) return toast('No change.');
+    if(newN===PKG_SEED_MARK || newN.toLowerCase()==='custom') return toast('That name is reserved.', true);
+    const dup=list.find((x,j)=>j!==i && x.toLowerCase()===newN.toLowerCase());
+    const n=cnt[oldN]||0;
+    if(dup){
+      if(!await uiConfirm(`<b>${esc(dup)}</b> is already on the list. Merge <b>${esc(oldN)}</b> into it?${n?` The ${n} drug${n===1?'':'s'} using “${esc(oldN)}” will switch to “${esc(dup)}”.`:''}`,{title:'Merge package types',okText:'Merge'})) return;
+      newN=dup;
+    } else if(n && !await uiConfirm(`Rename <b>${esc(oldN)}</b> to <b>${esc(newN)}</b>? This also updates the ${n} drug${n===1?'':'s'} using it (and their auto-generated package descriptions).`,{title:'Rename package type',okText:'Rename'})) return;
+    try{
+      await pkgEnsureSeeded();
+      { const { error }=await db.from('package_types').upsert({name:newN},{onConflict:'name'}); if(error) throw error; }
+      { const { error }=await db.from('package_types').delete().eq('name',oldN); if(error) throw error; }
+      if(n){
+        const { data:meds, error }=await db.from('medications').select('id,package_size,unit_size,unit_measure,form,pack_custom').eq('package_type',oldN); if(error) throw error;
+        for(const md of (meds||[])){
+          const upd={ package_type:newN };
+          if(!md.pack_custom){ const d=genPackDesc(md.package_size, md.unit_size, md.unit_measure, newN, md.form); if(d) upd.pack=d; }
+          const { error:ue }=await db.from('medications').update(upd).eq('id',md.id); if(ue) throw ue;
+        }
+        MEDS=[]; STOCKED_CC=null;
+      }
+    }catch(e){ return fail(e); }
+    toast('Renamed to “'+newN+'”.'); ov.remove(); await loadPkgTypes(); if(onChange) onChange({from:oldN,to:newN}); managePkgTypes(onChange);
+  });
+  ov.querySelectorAll('[data-ptdel]').forEach(b=>b.onclick=async()=>{
+    const i=+b.dataset.ptdel, nm=list[i], n=cnt[nm]||0;
+    if(!await uiConfirm(`Delete <b>${esc(nm)}</b> from the package type list?${n?` <b>${n}</b> drug${n===1?' uses':'s use'} it and will keep “${esc(nm)}” as a custom type until you change ${n===1?'it':'them'}. To fix a spelling, rename it instead.`:''}`,{title:'Delete package type',okText:'Delete',danger:true})) return;
+    try{ await pkgEnsureSeeded(); const { error }=await db.from('package_types').delete().eq('name',nm); if(error) throw error; }catch(e){ return fail(e); }
+    toast('“'+nm+'” removed from the list.'); ov.remove(); await loadPkgTypes(); if(onChange) onChange({deleted:nm}); managePkgTypes(onChange);
+  });
+}
 function schClass(s){ return s==='CII'?'c2':(['CTRL','CIII','CIV','CV'].includes(s)?'c35':'nc'); }
 function schOk(s,f){ return !f || f==='all' || schClass(s)===f; }
 // Normalize a list of NDCs: strip all dashes/spaces (digits only) and drop exact duplicates,
@@ -3816,7 +3878,7 @@ async function medModal(m){
   const isNew=!m; m=m||{name:'',strength:'',form:'',schedule:'RX',pack:'',package_size:null,unit_size:null,unit_measure:null,package_type:null,pack_custom:false,active:true};
   const UOMS=['','mL','L','mg','mcg','g','%','units'];
   const uomOpts=UOMS.map(u=>`<option value="${u}" ${((m.unit_measure||'')===u)?'selected':''}>${u||'—'}</option>`).join('');
-  const PTYPES=Array.from(new Set(['Vials','Tablets','Patches','Bottle'].concat(PKG_TYPES_EXTRA||[])));
+  const PTYPES=pkgTypeList();
   const curType=(m.package_type||'').trim();
   const isCustomType = curType!=='' && !PTYPES.includes(curType);
   const ptypeOpts = `<option value="" ${curType===''?'selected':''}>— use dosage form —</option>`+PTYPES.map(p=>`<option value="${p}" ${curType===p?'selected':''}>${p}</option>`).join('')+`<option value="Custom" ${isCustomType?'selected':''}>Custom…</option>`;
@@ -3851,7 +3913,7 @@ async function medModal(m){
     <div class="mrow"><div class="mfld"><label>Strength</label><input id="m_str" value="${esc(m.strength||'')}"></div><div class="mfld"><label>Form</label><input id="m_form" value="${esc(m.form||'')}"></div></div>
     <div class="mrow"><div class="mfld"><label>Schedule</label><select id="m_sch">${schOpts}</select></div><div class="mfld"><label>Package Quantity <span class="muted" style="font-weight:400">— units per package</span></label><input id="m_size" type="number" min="1" step="1" inputmode="numeric" value="${(m.package_size!=null&&m.package_size!=='')?esc(String(m.package_size)):''}" placeholder="e.g. 25"></div></div>
     <div class="mrow"><div class="mfld"><label>Individual Unit Size <span class="muted" style="font-weight:400">— optional</span></label><input id="m_usize" type="number" min="0" step="any" inputmode="decimal" value="${(m.unit_size!=null&&m.unit_size!=='')?esc(String(m.unit_size)):''}" placeholder="e.g. 1"></div><div class="mfld"><label>Unit of Measure <span class="muted" style="font-weight:400">— optional</span></label><select id="m_uom">${uomOpts}</select></div></div>
-    <div class="mrow"><div class="mfld"><label>Package Type</label><select id="m_ptype">${ptypeOpts}</select></div><div class="mfld" id="m_ptypecustomwrap" style="${isCustomType?'':'display:none'}"><label>Custom type</label><div style="display:flex;gap:8px"><input id="m_ptypecustom" value="${esc(customTypeVal)}" placeholder="e.g. bottles" style="flex:1"><button type="button" class="btn-ghost btn-sm" id="m_ptypesave" style="white-space:nowrap">＋ Save to list</button></div></div></div>
+    <div class="mrow"><div class="mfld"><label style="display:flex;align-items:center">Package Type <span id="m_ptypemanage" style="margin-left:auto;color:var(--brand);cursor:pointer;font-weight:600;font-size:11.5px">✎ Edit list</span></label><select id="m_ptype">${ptypeOpts}</select></div><div class="mfld" id="m_ptypecustomwrap" style="${isCustomType?'':'display:none'}"><label>Custom type</label><div style="display:flex;gap:8px"><input id="m_ptypecustom" value="${esc(customTypeVal)}" placeholder="e.g. bottles" style="flex:1"><button type="button" class="btn-ghost btn-sm" id="m_ptypesave" style="white-space:nowrap">＋ Save to list</button></div></div></div>
     <div class="mfld"><label style="display:flex;align-items:center;gap:8px">Pack Description <span class="muted" style="font-weight:400">— shown to care centers &amp; on invoices</span><span style="flex:1"></span><label style="display:flex;align-items:center;gap:6px;font-weight:600;font-size:12px;cursor:pointer"><input type="checkbox" id="m_packoverride" ${m.pack_custom?'checked':''} style="accent-color:var(--brand)"> Override</label></label><input id="m_pack" value="${esc(m.pack||'')}" placeholder="auto-generated from the fields above" ${m.pack_custom?'':'readonly'}><div class="muted" style="font-size:11.5px;margin-top:4px"><span id="m_packhint"></span><div style="margin-top:3px">Check <b>Override</b> to type your own description; unchecked, it's auto-generated from the fields above. Orders move in whole multiples of the Package Quantity (unless a care center allows partial amounts).</div></div></div>
     ${omniSection}
     <div class="m-foot" style="display:flex;gap:10px;justify-content:flex-end;margin-top:16px">${isNew?'':'<button class="btn-ghost" data-del style="color:#c0392b;border-color:#e0b4bc;margin-right:auto">🗑 Delete drug</button>'}<button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,540);
@@ -3891,6 +3953,17 @@ async function medModal(m){
       if(![...elPtype.options].some(o=>o.value===v)){ const opt=document.createElement('option'); opt.value=v; opt.textContent=v; elPtype.insertBefore(opt, elPtype.querySelector('option[value=\"Custom\"]')); }
       elPtype.value=v; applyPackMode(); toast('“'+v+'” saved to the package type list.');
     }; }
+  { const mg=ov.querySelector('#m_ptypemanage');
+    // Rebuild the dropdown after the list changes, keeping (or following) the current selection.
+    const rebuild=(chg)=>{
+      let cur=elPtype.value==='Custom'?elPtypeCustom.value.trim():elPtype.value;
+      if(chg&&chg.from&&cur===chg.from) cur=chg.to;
+      const L=pkgTypeList(), isC=cur!=='' && !L.includes(cur);
+      elPtype.innerHTML=`<option value="">— use dosage form —</option>`+L.map(p=>`<option value="${esc(p)}">${esc(p)}</option>`).join('')+`<option value="Custom">Custom…</option>`;
+      elPtype.value=isC?'Custom':cur; if(isC) elPtypeCustom.value=cur;
+      applyPackMode();
+    };
+    if(mg) mg.onclick=()=>managePkgTypes(rebuild); }
   applyPackMode();
   if(isNew){
     ov.querySelectorAll('input[name=ccScope]').forEach(r=>r.onchange=()=>{ ov.querySelector('#ccList').style.display = ov.querySelector('input[name=ccScope]:checked').value==='some'?'block':'none'; });
