@@ -2778,6 +2778,56 @@ async function copyNextUnit(){
   COPY_FLOW=true;   // tells openCheckout this is part of a copy run (don't clear the queue)
   openCheckout();
 }
+// ---- Reorder a completed order ----
+// Loads the original order's items + requested quantities into a NEW cart (the original order is never
+// touched). The user can add/remove/adjust before submitting through the normal checkout, which creates
+// a brand-new order with its own order number.
+function reorderLinesFrom(src){
+  const want=(src.order_lines||[]).map(l=>({ id:l.medication_id, qty:(l.requested_qty!=null?l.requested_qty:(l.approved_qty||0)) })).filter(x=>x.id && x.qty>0);
+  const keep=[], dropped=[];
+  want.forEach(x=>{ const m=MEDS.find(mm=>mm.id===x.id);
+    if(m && !CC_DEACTIVATED.has(x.id)) keep.push(x);
+    else { const lm=((src.order_lines||[]).find(l=>l.medication_id===x.id)||{}).medications||m||{}; dropped.push(lm.name?(lm.name+(lm.strength?' '+lm.strength:'')):'an item no longer on the formulary'); } });
+  return { keep, dropped };
+}
+async function reorderToCart(orderId){
+  let src=MY_ORDERS.find(o=>o.id===orderId);
+  if(!src || !src.order_lines || !src.order_lines.length){ const { data }=await db.from('orders').select('*, order_lines(*, medications(name,strength))').eq('id',orderId).maybeSingle(); src=data; }
+  if(!src){ toast('Could not load that order.', true); return; }
+  await loadMeds(); await loadStocked();
+  const { keep, dropped }=reorderLinesFrom(src);
+  if(!keep.length){ return uiAlert('Nothing to reorder','None of the items on '+esc(src.order_no)+' can be ordered at this care center right now.'); }
+  if(activeCartIds().length){
+    if(!await uiConfirm(`Your current cart has <b>${activeCartIds().length}</b> item(s). It will be saved to <b>Pending Carts</b> so nothing is lost, and a new cart will start with the items from <b>${esc(src.order_no)}</b>.`,{title:'Reorder '+esc(src.order_no),okText:'Save cart & reorder'})) return;
+    stashCartAsDraft();
+  }
+  CART={}; NEW_TO_FORMULARY=new Set();
+  keep.forEach(x=>{ CART[x.id]=normCartQty(x.id, x.qty, true); });
+  saveCart();
+  hospTab='order'; await renderOrdering();
+  toast('Reorder of '+src.order_no+' loaded — add, remove, or change quantities, then Review & Checkout.');
+  // same check as adding by hand: items not stocked in this unit's Omnicell must be confirmed
+  const notStocked=keep.map(x=>x.id).filter(id=>!STOCKED.has(id));
+  if(notStocked.length) newFormularyPrompt(notStocked);
+  if(dropped.length) setTimeout(()=>toast('Not added (no longer orderable here): '+dropped.join(', '), true), 700);
+}
+// Pharmacy-Order Mode: rebuild a completed pharmacy-generated order as a new pharmacy order.
+let PHARM_REORDER_FROM=null;
+async function pharmacyReorder(orderId){
+  const { data:o, error } = await db.from('orders').select('*, care_centers(*), order_lines(*, medications(name,strength))').eq('id',orderId).maybeSingle();
+  if(error||!o){ toast('Could not open the order.', true); return; }
+  const cc=o.care_centers||{};
+  if(cc.ordering_mode!=='pharmacy'){ return uiAlert('Reorder from the care center','<b>'+esc(cc.name||'This facility')+'</b> uses self-ordering, so a reorder is started by the care center from <b>My Orders</b>.'); }
+  await renderStaff({shellOnly:true});
+  PHARM_REORDER_FROM=o.order_no;
+  // A plain object (no id) so the build starts as a NEW order — never the original.
+  await pharmacyBuildScreen(cc, { order_lines:o.order_lines||[], purchaser_name:o.purchaser_name||'', purchaser_email:o.purchaser_email||'' });
+  const { dropped }=reorderLinesFrom(o);
+  Object.keys(CART).forEach(id=>{ if(!MEDS.some(m=>m.id===id) || CC_DEACTIVATED.has(id)) delete CART[id]; });
+  saveCart(); if($('#medList')){ drawMeds(); drawCart(); }
+  toast('Reorder of '+o.order_no+' loaded as a new order — edit it, then create the order.');
+  if(dropped.length) setTimeout(()=>toast('Not added (no longer orderable here): '+dropped.join(', '), true), 700);
+}
 // Copy an order (same items + quantities) to other care centers — review & submit each in turn.
 async function copyOrderModal(orderId){
   let src=MY_ORDERS.find(o=>o.id===orderId);
@@ -2851,6 +2901,7 @@ function drawMyOrders(){
       ${sh&&sh.shipped?`<div class="muted" style="font-size:12.5px;margin-top:10px">🚚 Shipped ${esc(sh.ship_date||'')}${(sh.tracking||[]).length?' · Track: '+fedexLinks(sh.tracking):''}${o.delivered?' · <b>Delivered</b>':''}</div>`:''}
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px">
         ${canCancel?`<button class="btn-ghost btn-sm" data-cancel="${o.id}" style="color:#c0392b;border-color:#e0b4bc">🗑 Cancel order</button>`:''}
+        ${(o.status==='complete' && CURRENT_CC && CURRENT_CC.ordering_mode!=='pharmacy') ? `<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order with these items — you can add, remove, and change quantities before submitting">🔁 Reorder</button>`:''}
         ${MULTI_CC && o.status!=='cancelled' && CURRENT_CC && CURRENT_CC.allow_copy ? `<button class="btn-ghost btn-sm" data-copyto="${o.id}" style="color:var(--brand);border-color:#cfe0f2">📋 Copy to other units</button>`:''}
         <span style="flex:1"></span>
         ${needCcApprove?'':`<button class="btn-ghost btn-sm" data-print="${o.id}" style="color:var(--brand);border-color:#e0b4bc">🖨 Re-print order request</button>`}
@@ -2860,6 +2911,7 @@ function drawMyOrders(){
   host.querySelectorAll('[data-print]').forEach(x=>x.onclick=async()=>{ const oo=MY_ORDERS.find(m=>m.id===x.dataset.print); printRequest(x.dataset.print); if(oo&&oo.created_by_pharmacy&&!oo.cc_printed){ await db.from('orders').update({cc_printed:true}).eq('id',oo.id); oo.cc_printed=true; renderMyOrders(); } });
   host.querySelectorAll('[data-222]').forEach(x=>x.onclick=()=>openDea222Live(x.dataset['222'],'purchaser'));
   host.querySelectorAll('[data-copyto]').forEach(x=>x.onclick=()=>copyOrderModal(x.dataset.copyto));
+  host.querySelectorAll('[data-reorder]').forEach(x=>x.onclick=()=>reorderToCart(x.dataset.reorder));
   host.querySelectorAll('[data-cancel]').forEach(x=>x.onclick=async()=>{
     const o=MY_ORDERS.find(m=>m.id===x.dataset.cancel)||{};
     const who=await uiCancelOrder(x.dataset.cancel, o.purchaser_name||(CURRENT_CC&&CURRENT_CC.unit_mgr)||'');
@@ -3130,7 +3182,7 @@ async function renderQueue(host){
   host.innerHTML='<div class="section-head" style="margin-top:6px"><h2 style="font-size:19px">Order Queue</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="pharmNewOrder">＋ Create order for a facility</button></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
   { const nb=$('#pharmNewOrder'); if(nb) nb.onclick=()=>pharmacyOrderModal(); }
   const { data:orders, error } = await db.from('orders')
-    .select('*, care_centers(name,color,short, org_id, organizations(name,color)), order_lines(id)')
+    .select('*, care_centers(name,color,short, org_id, ordering_mode, organizations(name,color)), order_lines(id)')
     .order('created_at',{ascending:false});
   if(error){ $('#queue').innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
   QUEUE_ORDERS = orders||[];
@@ -3155,7 +3207,7 @@ function drawQueueGroups(){
       <span style="display:flex;gap:8px;align-items:center">
         ${isDraft
           ? `<button class="btn-primary btn-sm" data-resume="${o.id}">Resume →</button><button class="btn-ghost btn-sm" data-discard="${o.id}" title="Cancel draft" style="color:#c0392b;border-color:#e0b4bc">Discard</button>`
-          : `<button class="btn-ghost btn-sm" data-open="${o.id}">Open →</button>${isAdmin?`<button class="btn-ghost btn-sm" data-del="${o.id}" title="Delete order" style="color:#c0392b;border-color:#e0b4bc">🗑</button>`:''}`}
+          : `${(o.status==='complete' && cc.ordering_mode==='pharmacy')?`<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order for this facility with these items">🔁 Reorder</button>`:''}<button class="btn-ghost btn-sm" data-open="${o.id}">Open →</button>${isAdmin?`<button class="btn-ghost btn-sm" data-del="${o.id}" title="Delete order" style="color:#c0392b;border-color:#e0b4bc">🗑</button>`:''}`}
       </span></div>`;
   };
   // top-level status tabs
@@ -3191,6 +3243,7 @@ function drawQueueGroups(){
   q.querySelectorAll('.tabbar [data-qt]').forEach(t=>t.onclick=()=>{ QUEUE_TAB=t.dataset.qt; drawQueueGroups(); });
   q.querySelectorAll('[data-del]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); deleteOrder(x.dataset.del); });
   q.querySelectorAll('[data-resume]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); pharmacyResumeDraft(x.dataset.resume); });
+  q.querySelectorAll('[data-reorder]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); pharmacyReorder(x.dataset.reorder); });
   q.querySelectorAll('[data-discard]').forEach(x=>x.onclick=async e=>{ e.stopPropagation(); const who=await uiCancelOrder(x.dataset.discard, ME.fullName||''); if(who){ QUEUE_ORDERS=(QUEUE_ORDERS||[]).filter(z=>z.id!==x.dataset.discard); drawQueueGroups(); } });
   q.querySelectorAll('.inbox-row[data-open]').forEach(r=>r.onclick=e=>{ if(e.target.closest('[data-del]')) return; openOrder(r.dataset.open); });
 }
@@ -3253,7 +3306,8 @@ async function pharmacyBuildScreen(cc, draft, editOrder){
   CURRENT_CC=cc; PHARM_BUILD=true; CART={}; NEW_TO_FORMULARY=new Set(); STOCKED_CC=null;
   PHARM_EDIT_ORDER = editOrder || null;
   if(editOrder) draft = editOrder;
-  PHARM_DRAFT_ID = (draft && !editOrder) ? draft.id : null;
+  PHARM_DRAFT_ID = (draft && !editOrder && draft.id) ? draft.id : null;
+  const reorderOf = (!editOrder && draft && !draft.id) ? PHARM_REORDER_FROM : null; PHARM_REORDER_FROM=null;
   await loadMeds(); await loadStocked();
   if(draft){
     (draft.order_lines||[]).forEach(l=>{ const qn=(PHARM_EDIT_ORDER ? (l.approved_qty!=null?l.approved_qty:l.requested_qty) : (l.requested_qty!=null?l.requested_qty:l.approved_qty))||0; if(l.medication_id && qn>0) CART[l.medication_id]=qn; });
@@ -3264,7 +3318,7 @@ async function pharmacyBuildScreen(cc, draft, editOrder){
   host.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin:2px 0 12px;flex-wrap:wrap">
       <button class="btn-ghost btn-sm" id="poBack">${PHARM_EDIT_ORDER?'← Back to order (no changes)':'← Back to queue'}</button>
       <span class="muted">${PHARM_EDIT_ORDER?'Adding items to':(PHARM_DRAFT_ID?'Editing draft for':'Creating order for')}</span> <b>${PHARM_EDIT_ORDER?esc(PHARM_EDIT_ORDER.order_no)+' · ':''}${esc(cc.name)}</b>
-      <span class="badge b-c35">Pharmacy-generated</span>${PHARM_DRAFT_ID?' <span class="badge" style="background:#eef4fb;border:1px solid #cfe0f2;color:#2c4a63">Draft</span>':''}${PHARM_EDIT_ORDER?' <span class="badge" style="background:#fff6e6;border:1px solid #f0d9a8;color:#8a5a12">Submitted order</span>':''}
+      <span class="badge b-c35">Pharmacy-generated</span>${reorderOf?` <span class="badge" style="background:#eef6ee;border:1px solid #c6e3c9;color:#2f6b36">🔁 Reorder of ${esc(reorderOf)}</span>`:''}${PHARM_DRAFT_ID?' <span class="badge" style="background:#eef4fb;border:1px solid #cfe0f2;color:#2c4a63">Draft</span>':''}${PHARM_EDIT_ORDER?' <span class="badge" style="background:#fff6e6;border:1px solid #f0d9a8;color:#8a5a12">Submitted order</span>':''}
       <span style="flex:1"></span>
       ${PHARM_CONTACT.email?`<span class="muted" style="font-size:12px">Approval alert → ${esc(PHARM_CONTACT.email)}</span>`:''}
     </div>
@@ -3591,6 +3645,7 @@ function renderPharmActions(o){
   if(approvedPlus && o.has_c2) mid.push(`<button class="btn-ghost btn-sm" data-doc="dea" style="color:var(--c2);border-color:#d9b3bb">◆ DEA 222</button>`);
   if(['shipped','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-doc="fedexpod" style="color:#4d148c;border-color:#d9c9ee">📦 FedEx proof of delivery</button>`);
   if(['shipped','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-doc="pod">🖨 Delivery confirmation</button>`);
+  if(o.status==='complete' && (o.care_centers||{}).ordering_mode==='pharmacy') mid.push(`<button class="btn-ghost btn-sm" data-reorderorder title="Start a new order for this facility with these items. This order stays as it is.">🔁 Reorder</button>`);
   if(o.created_by_pharmacy && ['submitted','review'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-editsubmitted title="Return to the order builder to add items that were missed. Existing items and details are kept.">← Back to order builder</button>`);
   if(o.created_by_pharmacy && !['cancelled','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-approvalemail style="color:var(--brand);border-color:#e0b4bc">📄 Approval packet / email</button>`);
   if(!['submitted','cancelled','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-back>← Back a step</button>`);
@@ -3623,6 +3678,7 @@ function renderPharmActions(o){
   });
   const ae=host.querySelector('[data-approvalemail]'); if(ae) ae.onclick=()=>sendApprovalEmail(o);
   const es=host.querySelector('[data-editsubmitted]'); if(es) es.onclick=()=>pharmacyEditSubmitted(o.id);
+  const ro=host.querySelector('[data-reorderorder]'); if(ro) ro.onclick=()=>pharmacyReorder(o.id);
   const r2=host.querySelector('[data-req222]'); if(r2) r2.onclick=()=>requestDea222(o);
   const sh=host.querySelector('[data-ship]'); if(sh) sh.onclick=()=>markShipped(o);
   const bk=host.querySelector('[data-back]'); if(bk) bk.onclick=()=>stepBack(o);
