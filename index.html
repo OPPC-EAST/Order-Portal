@@ -3179,7 +3179,10 @@ async function renderStaff(opts){
 let QUEUE_ORDERS=null;     // cached queue fetch
 let QUEUE_TAB='pending';   // top-level: pending | completed | canceled
 async function renderQueue(host){
-  host.innerHTML='<div class="section-head" style="margin-top:6px"><h2 style="font-size:19px">Order Queue</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="pharmNewOrder">＋ Create order for a facility</button></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
+  host.innerHTML='<div class="ml-sticky" id="qSticky"><div class="section-head" style="margin:0 0 10px"><h2 style="font-size:19px;margin:0">Order Queue</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="pharmNewOrder">＋ Create order for a facility</button></div><div id="qTabs"></div></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
+  // keep the Order Queue header + status tabs pinned right below the (already sticky) staff nav
+  { const _nav=document.querySelector('.staffnav-sticky'), _qs=document.getElementById('qSticky');
+    if(_qs){ const navTop=_nav?(parseInt(getComputedStyle(_nav).top)||66):66, navH=_nav?_nav.offsetHeight:54; _qs.style.top=(navTop+navH)+'px'; } }
   { const nb=$('#pharmNewOrder'); if(nb) nb.onclick=()=>pharmacyOrderModal(); }
   const { data:orders, error } = await db.from('orders')
     .select('*, care_centers(name,color,short, org_id, ordering_mode, organizations(name,color)), order_lines(id)')
@@ -3211,7 +3214,7 @@ function drawQueueGroups(){
       </span></div>`;
   };
   // top-level status tabs
-  const tabbar=`<div class="tabbar" style="margin:2px 0 16px">
+  const tabbar=`<div class="tabbar" style="margin:0">
     <div class="tab ${QUEUE_TAB==='pending'?'active':''}" data-qt="pending">Pending Orders <span class="muted">(${counts.pending})</span></div>
     <div class="tab ${QUEUE_TAB==='drafts'?'active':''}" data-qt="drafts">Drafts <span class="muted">(${counts.drafts})</span></div>
     <div class="tab ${QUEUE_TAB==='completed'?'active':''}" data-qt="completed">Completed Orders <span class="muted">(${counts.completed})</span></div>
@@ -3239,8 +3242,9 @@ function drawQueueGroups(){
       </div>
       ${g.items.map(o=>rowHtml(o,cc)).join('')}</div>`;
   }).join('') : `<div class="card"><div class="empty" style="padding:40px 20px"><div class="big">📋</div>No ${QUEUE_TAB} orders.</div></div>`;
-  q.innerHTML = tabbar + body;
-  q.querySelectorAll('.tabbar [data-qt]').forEach(t=>t.onclick=()=>{ QUEUE_TAB=t.dataset.qt; drawQueueGroups(); });
+  const qt=$('#qTabs');
+  if(qt){ qt.innerHTML=tabbar; q.innerHTML=body; } else q.innerHTML = tabbar + body;
+  (qt||q).querySelectorAll('.tabbar [data-qt]').forEach(t=>t.onclick=()=>{ QUEUE_TAB=t.dataset.qt; drawQueueGroups(); window.scrollTo({top:0}); });
   q.querySelectorAll('[data-del]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); deleteOrder(x.dataset.del); });
   q.querySelectorAll('[data-resume]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); pharmacyResumeDraft(x.dataset.resume); });
   q.querySelectorAll('[data-reorder]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); pharmacyReorder(x.dataset.reorder); });
