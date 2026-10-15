@@ -769,23 +769,25 @@ function promptResumeCart(ts){
   const when = ts ? new Date(ts).toLocaleString('en-US',{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'}) : '';
   const ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:80;padding:20px';
-  ov.innerHTML=`<div class="card" style="max-width:540px;width:100%;padding:20px 22px">
+  ov.innerHTML=`<div class="card" style="width:min(720px, calc(100vw - 32px));max-width:none;box-sizing:border-box;padding:20px 22px">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px"><span style="font-size:24px">🛒</span><h3 style="flex:1;margin:0">Resume your saved cart?</h3></div>
     <p style="margin:0 0 8px;font-size:14px">You have a saved cart for <b>${esc(CURRENT_CC.name)}</b>${when?' (last edited '+esc(when)+')':''} that wasn’t submitted:</p>
     <p style="margin:0 0 4px;font-size:14px"><b>${n}</b> item${n>1?'s':''} in your cart.</p>
     ${(()=>{ const nd=getDrafts().length; return nd?`<p class="muted" style="font-size:13px;margin:6px 0 0">You also have <b>${nd}</b> other pending cart${nd!==1?'s':''} — see the <b>Pending Carts</b> tab.</p>`:''; })()}
     <p class="muted" style="font-size:13px;margin-top:10px">Continue where you left off, save it as a draft and start a new order, or clear it and start over?</p>
-    <div class="m-foot" style="flex-wrap:wrap;gap:8px">
-      <button class="btn-ghost" data-clear style="color:#c0392b;border-color:#c0392b">Delete &amp; start new</button>
-      <button class="btn-ghost" data-stash>🗂 Save as draft &amp; start new</button>
-      <button class="btn-primary" data-continue>Continue with saved cart</button>
+    <div class="m-foot rc-actions" style="display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px">
+      <button class="btn-ghost" data-clear style="color:#c0392b;border-color:#c0392b;text-transform:uppercase;white-space:nowrap;letter-spacing:.02em;font-size:12.5px;padding:10px 14px">Delete &amp; start new</button>
+      <button class="btn-ghost" data-stash style="text-transform:uppercase;white-space:nowrap;letter-spacing:.02em;font-size:12.5px;padding:10px 14px">Save draft &amp; start new</button>
+      <button class="btn-primary" data-continue style="text-transform:uppercase;white-space:nowrap;letter-spacing:.02em;font-size:12.5px;padding:10px 14px">Continue with saved cart</button>
     </div>
   </div>`;
   document.body.appendChild(ov);
   const close=()=>ov.remove();
   /* backdrop click disabled — close only via the ✕ or Cancel */   // clicking outside keeps the saved cart
   ov.querySelector('[data-continue]').onclick=()=>{ close(); hospTab='order'; renderOrdering(); };
-  ov.querySelector('[data-clear]').onclick=()=>{ CART={}; NEW_TO_FORMULARY=new Set(); saveCart(); close(); if($('#medList')){ drawMeds(); drawCart(); } toast('Cart cleared — starting a new order.'); };
+  ov.querySelector('[data-clear]').onclick=async()=>{
+    if(!await uiConfirm('Delete the saved cart for <b>'+esc(CURRENT_CC.name)+'</b> ('+n+' item'+(n!==1?'s':'')+') and start a new order? This cannot be undone. To keep it, choose <b>SAVE DRAFT &amp; START NEW</b> instead.',{title:'Delete saved cart?',okText:'Delete & start new',danger:true})) return;
+    CART={}; NEW_TO_FORMULARY=new Set(); saveCart(); close(); if($('#medList')){ drawMeds(); drawCart(); } toast('Cart cleared — starting a new order.'); };
   ov.querySelector('[data-stash]').onclick=()=>{ stashCartAsDraft(); close(); toast('Cart saved to Pending Carts — starting a new order.'); hospTab='order'; renderOrdering(); };
 }
 
@@ -1114,17 +1116,27 @@ function packDisp(m){ return ((m&&m.pack)||'').trim(); }
 // packaging fields: Package Type (noun, falls back to the dosage form), Package Quantity, and —
 // when Package Quantity = 1 — the Individual Unit Size + Unit of Measure.
 //   • "30 tablets"  • "300 vials"  • "3 - 15 mL bottles" (package qty 1, 15 mL each)
-function wqNoun(m){
+// Singular of a (plural) unit noun — "tablets"→"tablet", "patches"→"patch", "flushes"→"flush", "bodies"→"body".
+function singularUnit(noun){
+  const p=String(noun||'').trim().split(/\s+/); let w=p[p.length-1]||'';
+  if(/[^aeiou]ies$/i.test(w)) w=w.slice(0,-3)+'y';
+  else if(/(ches|shes|sses|xes|zes)$/i.test(w)) w=w.slice(0,-2);
+  else if(/[^s]s$/i.test(w)) w=w.slice(0,-1);
+  p[p.length-1]=w; return p.join(' ');
+}
+function wqNoun(m, q){
   const pt=((m&&m.package_type)||'').trim();
-  if(pt){ let u=pt.toLowerCase(); if(!/s$/.test(u)) u+='s'; return u; }   // package type (ensure plural)
-  return pluralForm((m&&m.form)||'');                                      // else pluralize the dosage form
+  let n;
+  if(pt){ n=pt.toLowerCase(); if(!/s$/.test(n)) n+='s'; }   // package type (ensure plural)
+  else n=pluralForm((m&&m.form)||'');                       // else pluralize the dosage form
+  return (q!=null && +q===1) ? singularUnit(n) : n;         // exactly 1 → singular ("1 tablet")
 }
 function wqQty(m,q){
   m=m||{};
   const ps=parseInt(m.package_size);
   const us=(m.unit_size!=null && m.unit_size!=='' && +m.unit_size>0)?(+m.unit_size):null;
   const uom=((m.unit_measure)||'').trim();
-  const noun=wqNoun(m);
+  const noun=wqNoun(m, q);
   if(ps===1 && us!=null) return q+' - '+us+(uom?' '+uom:'')+' '+noun;      // "3 - 15 mL bottles"
   return q+' '+noun;                                                        // "30 tablets" / "300 vials"
 }
@@ -1398,7 +1410,7 @@ function wholesaleRequestDoc(o, rx){
       const qtyCell = adjusted
         ? `<b style="background:#fff3cd;padding:1px 6px;border-radius:4px">${esc(wqQty(m,qtyVal))}</b> <span style="color:#8a5a12;font-size:10px;font-weight:800">ADJUSTED (was ${esc(String(reqd))})</span>`
         : `<b>${esc(wqQty(m,qtyVal))}</b>`;
-      return `<tr><td>${esc(m.name)}<div class="s">${esc(m.strength||'')} · ${esc(m.form||'')}</div></td><td>${schLabelPlain(m.schedule)}${m.schedule==='CII'?' ◆':''}</td><td class="r">${qtyCell}</td></tr>`; }).join('');
+      return `<tr><td>${esc(m.name)}<div class="s">${esc(m.strength||'')} · ${esc(m.form||'')}</div></td><td>${schLabelPlain(m.schedule)}${m.schedule==='CII'?' ◆':''}</td><td class="r" style="text-transform:uppercase">${qtyCell}</td></tr>`; }).join('');
     const c2=lines.filter(l=>(l.medications||{}).schedule==='CII');
     const att = pharmGen
       ? (c2.length ? `<div class="ack att"><b>ATTENTION:</b> This order includes Schedule II (C-II) medication(s). The pharmacy requires the original, complete and accurate DEA Form 222 for the requested C-II item(s). This order will not be shipped until the signed DEA 222 is received by the pharmacy.</div>` : '')
@@ -1801,7 +1813,7 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
   const deaFirst = hasC2 && !!o.created_by_pharmacy;      // pharmacy-generated: DEA 222 leads the packet
   const nW = deaFirst ? '②' : '①', nD = deaFirst ? '①' : '②';
   const wSec = `<div style="font-size:12px;font-weight:800;color:#37506e;margin:12px 0 4px">${nW} Wholesale Order Request <span style="font-weight:500;color:#8a95a1">— click text to edit · each category prints as its own page</span></div>
-    <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;height:460px;background:#e4e9ef"><iframe id="pkW" title="Wholesale Order" style="border:0;display:block;width:100%;min-width:816px;background:#e4e9ef"></iframe></div>`;
+    <div class="pkpane" id="pkWpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;height:min(720px,66vh);background:#e4e9ef"><iframe id="pkW" title="Wholesale Order" style="border:0;display:block;width:100%;background:#e4e9ef"></iframe></div>`;
   const dSec = hasC2 ? `<div style="font-size:12px;font-weight:800;color:#37506e;margin:12px 0 4px">${nD} DEA Form 222 preview <span style="font-weight:500;color:#8a95a1">— edit packages/size in the panel on the right</span></div>
     <div class="pkpane" style="border:1px solid #d7dee7;border-radius:8px;overflow:hidden;height:min(600px,70vh);background:#eef1f5"><iframe id="pkD" title="DEA 222" style="border:0;display:block;width:100%;height:100%;background:#eef1f5"></iframe></div>` : '';
   const pkLabel = deaFirst ? 'DEA Form 222 preview + Wholesale Order' : (hasC2 ? 'Wholesale Order + DEA Form 222 preview' : 'Wholesale Order');
@@ -1815,7 +1827,8 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
       <a class="btn-ghost" id="pkMail" href="${mail}" target="_blank" rel="noopener" style="text-decoration:none;${pEmail?'':'opacity:.5;pointer-events:none'}">✉️ Open approval email${pEmail?'':' (no email on file)'}</a>
       <div id="pkStatus" class="muted" style="font-size:12.5px;flex:1;min-width:140px"></div>
     </div>
-    <div class="muted" style="font-size:11.5px;margin-top:8px">The PDF (${pkLabel}) saves to your Downloads folder. In your email, choose “Attach file” and pick <b>Order-Packet-${esc(orderNo||'order')}.pdf</b>.</div>`, 1080);
+    <div class="muted" style="font-size:11.5px;margin-top:8px">The PDF (${pkLabel}) saves to your Downloads folder. In your email, choose “Attach file” and pick <b>Order-Packet-${esc(orderNo||'order')}.pdf</b>.</div>`, 1320);
+  { const card=ov.querySelector('.modal-card'); if(card){ card.style.width='min(1320px, 96vw)'; card.style.maxHeight='94vh'; } }
   { const hx=ov.querySelector('.modal-x'), hs=ov.querySelector('.pk-sticky'); if(hx&&hs){ hs.appendChild(hx); hx.style.top='16px'; hx.style.right='16px'; } }  // keep ✕ in the pinned header
   const st=ov.querySelector('#pkStatus'), dl=ov.querySelector('#pkDl');
   const pkW=ov.querySelector('#pkW'), pkD=ov.querySelector('#pkD');
@@ -1824,8 +1837,20 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
     d.querySelectorAll('.noprint').forEach(e=>e.remove());
     d.designMode='on';                                   // let the user click-edit any field
     const s=d.createElement('style'); s.textContent='::selection{background:#bcd8ff}'; d.head.appendChild(s);
-    pkW.style.height=Math.max(440,(d.documentElement.scrollHeight||d.body.scrollHeight||1000)+24)+'px';
+    fitWholesale();
   }catch(e){} };
+  // Scale the wholesale pages so one full page (8.5×11 in) fits the visible preview area; re-fit on resize.
+  const pkWpane=ov.querySelector('#pkWpane');
+  function fitWholesale(){ try{ const d=pkW.contentDocument; if(!d||!d.body||!pkWpane) return;
+    const PW=816, PH=1056, LABEL=34;                      // page px at 96 dpi + page divider
+    const availH=pkWpane.clientHeight-LABEL-18, availW=pkWpane.clientWidth-28;
+    const z=Math.max(0.3, Math.min(1, availH/PH, availW/PW));
+    d.documentElement.style.zoom=z.toFixed(3);
+    pkW.style.height='10px';
+    pkW.style.height=Math.ceil((d.documentElement.scrollHeight||d.body.scrollHeight||1000))+'px';
+  }catch(e){} }
+  if(window.ResizeObserver && pkWpane){ const roW=new ResizeObserver(()=>fitWholesale()); roW.observe(pkWpane);
+    const moW=new MutationObserver(()=>{ if(!document.body.contains(pkWpane)){ roW.disconnect(); moW.disconnect(); } }); moW.observe(document.body,{childList:true,subtree:true}); }
   pkW.srcdoc=wholesaleRequestDoc(o, rx);
   // DEA 222: same layout as the self-order preview — form zoomed out to fit, editing panel on the right.
   const BAR_W=340, PAGE_W=1056;                          // side panel px; 792pt form width in px
@@ -1862,7 +1887,8 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
       async function addWholesale(){
         for(const pg of wpages){
           if(!first) pdf.addPage('letter','portrait'); first=false;
-          const c=await window.html2canvas(pg,{scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false});
+          const c=await window.html2canvas(pg,{scale:2, backgroundColor:'#ffffff', useCORS:true, logging:false,
+            onclone:cd=>{ cd.documentElement.style.zoom='1'; }});
           _placeCanvas(pdf, c, 612, 792);
         }
       }
