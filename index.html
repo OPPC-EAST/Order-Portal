@@ -1549,7 +1549,7 @@ function dea222Items(o){
       size = pkgDeaSize(m);
     }
     const ndc=(l.ndc||'').replace(/[^0-9A-Za-z]/g,'');
-    return { pkgs:String(pkgs), size:size, name:(m.name+' '+(m.strength||'')+' '+(m.form||'')).replace(/\s+/g,' ').trim().toUpperCase(), ndc, numShip:String(pkgs), dateShip:shipDate };
+    return { id:l.id||null, pkgs:String(pkgs), size:size, name:(m.name+' '+(m.strength||'')+' '+(m.form||'')).replace(/\s+/g,' ').trim().toUpperCase(), ndc, numShip:String(pkgs), dateShip:shipDate };
   });
 }
 function build222Doc(o, role){
@@ -1557,13 +1557,14 @@ function build222Doc(o, role){
   const sup = role==='supplier';
   const cc=o.care_centers||{};
   const items=dea222Items(o);
-  const model={ role, supplier:DEA_SUPPLIER, printName:(o.purchaser_name||cc.unit_mgr||''), title:(o.purchaser_title||''), date:todayMDY(),
+  const canOrder = sup && !!o.id && items.length>1 && !['complete','cancelled'].includes(o.status);
+  const model={ role, orderId:(o.id||null), canOrder, supplier:DEA_SUPPLIER, printName:(o.purchaser_name||cc.unit_mgr||''), title:(o.purchaser_title||''), date:todayMDY(),
                 purchaser:{ name:cc.name, addr:(cc.ship_to||''), dea:(cc.facility_dea||'') }, items };
   const itemRows=items.map((it,i)=>sup
     ? `<tr><td class="n">${i+1}</td><td>${it.pkgs}</td><td>${it.size}</td><td>${it.name}</td><td class="mono">${it.ndc||'<span style="color:#c0152f">— none —</span>'}</td><td><input type="text" data-ship="${i}" value="${it.numShip}" style="width:42px"></td><td><input type="text" data-shipd="${i}" value="${it.dateShip}" style="width:82px"></td></tr>`
     : `<tr><td class="n">${i+1}</td><td><input type="text" data-pkgs="${i}" value="${esc(String(it.pkgs))}" style="width:46px"></td><td><input type="text" data-size="${i}" value="${esc(String(it.size))}" style="width:64px"></td><td>${it.name}</td></tr>`).join('');
   const sumHead = sup
-    ? '<tr><th></th><th>Pkgs</th><th>Size</th><th>Item</th><th>NDC (pharmacy)</th><th>No. Ship</th><th>Date Ship</th></tr>'
+    ? '<tr><th></th>'+(canOrder?'<th>Order</th>':'')+'<th>Pkgs</th><th>Size</th><th>Item</th><th>NDC (pharmacy)</th><th>No. Ship</th><th>Date Ship</th></tr>'
     : '<tr><th></th><th>No. of Packages</th><th>Package Size</th><th>Item</th></tr>';
   const title = sup ? `DEA Form 222 — Supplier completion · ${o.order_no}` : `DEA Form 222 — Schedule II order · ${o.order_no}`;
   const part1Block = sup
@@ -1591,6 +1592,8 @@ function build222Doc(o, role){
  table.sum th{font-size:9.5px;text-transform:uppercase;color:#5b6673;text-align:left;padding:2px 8px 2px 0}
  table.sum td{padding:1px 10px 1px 0}
  table.sum td.n{color:#8a94a1;text-align:right;padding-right:6px}
+ table.sum button.mv{padding:1px 6px;font-size:10px;line-height:1.2;border-radius:5px;margin-right:2px}
+ table.sum button.mv:disabled{opacity:.35;cursor:default}
  .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
  .ctl{display:flex;flex-direction:column;align-items:stretch;gap:11px;margin-top:12px}
  .cg{display:flex;align-items:center;gap:8px;font-size:11.5px;color:#43505f;justify-content:space-between}
@@ -1631,7 +1634,8 @@ function build222Doc(o, role){
 <div id="stageWrap"><div id="stage"><div id="page"><img id="bg" alt="DEA 222 form" src="${DEA222_IMG}"><div id="overlay"></div><div id="wm" aria-hidden="true"></div></div></div></div>
 <div id="bar">
  ${sup?`<div class="grid"><div class="blk"><b>SCHEDULE II ITEMS (${items.length}) — enter NDC &amp; shipment</b>
-     <table class="sum"><thead>${sumHead}</thead><tbody>${itemRows}</tbody></table></div></div>`:`<div class="grid" style="flex-direction:column;gap:12px"><div class="blk"><b>SCHEDULE II ITEMS (${items.length}) — adjust No. of Packages / Package Size</b>
+     ${canOrder?'<div style="font-size:11px;color:#5b6673;margin:3px 0 2px">Use ▲ ▼ to match the line order on the 222 the hospice sent. The order is saved to the order automatically.</div>':''}
+     <table class="sum"><thead>${sumHead}</thead><tbody id="supRows">${itemRows}</tbody></table><div id="ordMsg" style="font-size:11px;margin-top:4px;min-height:14px"></div></div></div>`:`<div class="grid" style="flex-direction:column;gap:12px"><div class="blk"><b>SCHEDULE II ITEMS (${items.length}) — adjust No. of Packages / Package Size</b>
      <table class="sum"><thead>${sumHead}</thead><tbody>${itemRows}</tbody></table></div>${part1Block}</div>
  <div class="note" style="background:#fdecef;border-color:#f0b9c6;color:#8a1e37"><b>Values shown in red</b> are the fields the care center nurse must complete — copy them onto the official DEA Form 222. Adjust <b>No. of Packages</b> / <b>Package Size</b> above if needed before printing.</div>`}
  <div class="note" style="background:#fdecef;border-color:#f0b9c6;color:#8a1e37"><b>You can print this preview DEA 222 onto your own form, BUT test printer settings/margins first.</b> Tick “Print form image too” below to print a watermarked <b>SAMPLE PREVIEW</b> on blank paper instead.</div>
@@ -1696,8 +1700,41 @@ var tFull=document.getElementById('tFull'); if(tFull) tFull.addEventListener('ch
 var pN=document.getElementById('pName'); if(pN) pN.addEventListener('input',function(){MODEL.printName=this.value;render();});
 var pT=document.getElementById('pTitle'); if(pT) pT.addEventListener('input',function(){MODEL.title=this.value;render();});
 var pD=document.getElementById('pDate'); if(pD) pD.addEventListener('input',function(){MODEL.date=this.value;render();});
-Array.prototype.forEach.call(document.querySelectorAll('[data-ship]'),function(inp){inp.addEventListener('input',function(){MODEL.items[+inp.dataset.ship].numShip=this.value;render();});});
-Array.prototype.forEach.call(document.querySelectorAll('[data-shipd]'),function(inp){inp.addEventListener('input',function(){MODEL.items[+inp.dataset.shipd].dateShip=this.value;render();});});
+function hx(s){return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c];});}
+function bindShip(){
+  Array.prototype.forEach.call(document.querySelectorAll('[data-ship]'),function(inp){inp.addEventListener('input',function(){MODEL.items[+inp.dataset.ship].numShip=this.value;render();});});
+  Array.prototype.forEach.call(document.querySelectorAll('[data-shipd]'),function(inp){inp.addEventListener('input',function(){MODEL.items[+inp.dataset.shipd].dateShip=this.value;render();});});
+}
+// Supplier: re-arrange lines to match the hospice's 222 (saved to the order through the portal window).
+function drawSupRows(){
+  var tb=document.getElementById('supRows'); if(!tb) return; var n=MODEL.items.length;
+  tb.innerHTML=MODEL.items.map(function(it,i){
+    return '<tr><td class="n">'+(i+1)+'</td>'
+      +(MODEL.canOrder?'<td style="white-space:nowrap"><button type="button" class="mv" data-mv="-1" data-i="'+i+'" title="Move up"'+(i===0?' disabled':'')+'>▲</button><button type="button" class="mv" data-mv="1" data-i="'+i+'" title="Move down"'+(i===n-1?' disabled':'')+'>▼</button></td>':'')
+      +'<td>'+hx(it.pkgs)+'</td><td>'+hx(it.size)+'</td><td>'+hx(it.name)+'</td><td class="mono">'+(it.ndc?hx(it.ndc):'<span style="color:#c0152f">— none —</span>')+'</td>'
+      +'<td><input type="text" data-ship="'+i+'" value="'+hx(it.numShip)+'" style="width:42px"></td><td><input type="text" data-shipd="'+i+'" value="'+hx(it.dateShip)+'" style="width:82px"></td></tr>';
+  }).join('');
+  bindShip();
+  Array.prototype.forEach.call(tb.querySelectorAll('[data-mv]'),function(b){b.addEventListener('click',function(){
+    var i=+b.dataset.i, j=i+(+b.dataset.mv); if(j<0||j>=MODEL.items.length) return;
+    var t=MODEL.items[i]; MODEL.items[i]=MODEL.items[j]; MODEL.items[j]=t;
+    drawSupRows(); render(); saveOrder();
+  });});
+}
+var saveT=null;
+function saveOrder(){
+  var msg=document.getElementById('ordMsg'); clearTimeout(saveT);
+  msg.style.color='#5b6673'; msg.textContent='Saving line order…';
+  saveT=setTimeout(function(){
+    var fn=null; try{ fn=window.opener&&window.opener.__save222LineOrder; }catch(e){}
+    if(!fn){ msg.style.color='#c0152f'; msg.textContent='Could not save — keep the portal tab open, then try again.'; return; }
+    Promise.resolve(fn(MODEL.orderId, MODEL.items.map(function(it){return it.id;}))).then(function(r){
+      if(r&&r.ok){ msg.style.color='#1d7a4a'; msg.textContent='✓ Line order saved'; }
+      else { msg.style.color='#c0152f'; msg.textContent=(r&&r.error)||'Could not save the line order.'; }
+    });
+  },350);
+}
+if(MODEL.role==='supplier') drawSupRows(); else bindShip();
 Array.prototype.forEach.call(document.querySelectorAll('[data-pkgs]'),function(inp){inp.addEventListener('input',function(){MODEL.items[+inp.dataset.pkgs].pkgs=this.value;render();});});
 Array.prototype.forEach.call(document.querySelectorAll('[data-size]'),function(inp){inp.addEventListener('input',function(){MODEL.items[+inp.dataset.size].size=this.value;render();});});
 document.getElementById('btnPrint').addEventListener('click',function(){window.print();});
@@ -1705,6 +1742,18 @@ document.body.classList.add('showbg');
 setCal(); render();
 <\/script></body></html>`;
 }
+// Called from the supplier DEA 222 window when the pharmacy re-arranges lines to match the hospice's 222.
+// C-II lines get dea_line_no 1..n in the new order; other lines are left as they are.
+window.__save222LineOrder = async function(orderId, lineIds){
+  try{
+    const ids=(lineIds||[]).filter(Boolean);
+    for(let i=0;i<ids.length;i++){
+      const { error }=await db.from('order_lines').update({ dea_line_no:i+1 }).eq('id',ids[i]).eq('order_id',orderId);
+      if(error) return { ok:false, error:/dea_line_no/.test(error.message)?'Run 59_order_lines_dea_line_no.sql in Supabase first, then try again.':'Could not save: '+error.message };
+    }
+    return { ok:true };
+  }catch(e){ return { ok:false, error:'Could not save: '+(e.message||e) }; }
+};
 async function openDea222Live(orderId, role){
   const o=await fetchFull(orderId); if(!o) return;
   if(!o.order_lines.some(l=>(l.medications||{}).schedule==='CII')){ toast('No Schedule II items on this order.'); return; }
@@ -3292,10 +3341,6 @@ async function openOrder(id){
   const qtyEditable = ['approved','dea','ordered'].includes(o.status);   // editable from Approve until the order ships
   const ndcEditable = ['submitted','review','approved','dea'].includes(o.status);
   const ship=o._shipment;
-  // Pharmacy-generated orders: the pharmacy can re-arrange the C-II rows to match the line order on the
-  // DEA 222 the hospice actually sends, so NDCs land on the right line of the supplier 222.
-  const c2Lines=o.order_lines.filter(l=>(l.medications||{}).schedule==='CII');
-  const canReorder = !!o.created_by_pharmacy && c2Lines.length>1 && !['complete','cancelled'].includes(o.status);
   b.innerHTML = `
     <div style="display:flex;align-items:center;gap:10px">
       <button class="btn-ghost btn-sm" id="back">← Back to queue</button>
@@ -3318,17 +3363,11 @@ async function openOrder(id){
       <div id="pharmActions" style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:16px 0 4px"></div>
       ${o.has_c2?`<div class="badge b-c2" style="display:block;margin:6px 0 2px;padding:10px 12px;line-height:1.5">Schedule II present — after approval, request the hospice's DEA Form 222. Do not place the wholesale order until the 222 is received.${o.dea222_received?' <b>✔ Hospice reports the DEA 222 has been mailed.</b>':''}</div>`:''}
       <table class="lines" style="margin-top:10px">
-        ${canReorder?`<div class="muted" style="font-size:12px;margin:2px 0 -4px">◆ <b>DEA 222 line order:</b> use ▲ ▼ to match the order of items on the 222 the hospice sent. The supplier copy of the 222 follows this order.</div>`:''}
-        <thead><tr>${canReorder?'<th style="width:74px">222 line</th>':''}<th>Medication</th><th>Sched</th><th>NDC</th>${qtyStage?'<th style="text-align:right">Requested</th><th style="text-align:right">Approve Qty</th><th style="text-align:right">Packages</th>':''}</tr></thead>
+        <thead><tr><th>Medication</th><th>Sched</th><th>NDC</th>${qtyStage?'<th style="text-align:right">Requested</th><th style="text-align:right">Approve Qty</th><th style="text-align:right">Packages</th>':''}</tr></thead>
         <tbody>${o.order_lines.map((l,i)=>{ const m=l.medications||{}; const inc=pkgSize(m); const _aq=(l.approved_qty||0); const pk=(inc>1 && _aq%inc===0)?(_aq/inc):_aq; const diff=(l.approved_qty!=null && l.approved_qty!==l.requested_qty);
           const postAdj=(l.cc_approved_qty!=null && l.approved_qty!==l.cc_approved_qty);   // re-adjusted after the hospice approved
           const postAdjNote='<div class="postadj-note" data-postadj="'+i+'" style="font-size:10px;color:#8a5a12;font-weight:800">'+(postAdj?('▲ changed after approval — hospice approved '+l.cc_approved_qty):'')+'</div>';
-          const isC2=m.schedule==='CII';
-          const ordCell = canReorder ? (isC2
-            ? `<td style="white-space:nowrap"><span class="l222no" style="display:inline-block;min-width:16px;font-weight:800;color:#8b1a2b">${c2Lines.indexOf(l)+1}</span>
-                 <button type="button" class="btn-ghost btn-sm" data-lmove="-1" title="Move up on the DEA 222" style="padding:2px 7px;margin-left:4px">▲</button><button type="button" class="btn-ghost btn-sm" data-lmove="1" title="Move down on the DEA 222" style="padding:2px 7px;margin-left:2px">▼</button></td>`
-            : '<td class="muted" style="font-size:11px">—</td>') : '';
-          return `<tr data-lineid="${l.id}"${isC2?' data-c2="1"':''}>${ordCell}
+          return `<tr data-lineid="${l.id}">
             <td><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(packShort(m))}</div></td>
             <td>${schBadge(m.schedule)}</td>
             <td>${ndcEditable?(()=>{ const own=(ndcDir[l.medication_id]||[]); const lbl=[m.strength,m.form].filter(Boolean).join(' · '); const hasDir=ndcDirAll.length>0; return `<input data-ndc="${i}" ${hasDir?'list="ndcDirList"':''} value="${esc(l.ndc||'')}" placeholder="${hasDir?'select or type NDC…':'type NDC…'}" style="width:170px;font-family:var(--mono);font-size:12px">${hasDir?`<div class="muted" style="font-size:10.5px">${own.length?own.length+' on file for this drug · ':''}${esc(lbl)}</div>`:''}`; })():`<span class="mono" style="font-family:var(--mono);font-size:12px">${esc(l.ndc||'—')}</span>`}${l.ndc_one_time?'<div class="muted" style="font-size:10.5px;color:var(--amber)">↺ one-time (this order)</div>':''}</td>
@@ -3354,31 +3393,6 @@ async function openOrder(id){
     ${approvedPlus0?`<div id="ffPanel" style="flex:0 0 330px;max-width:330px;min-width:280px">${fulfillmentPanel(o)}</div>`:''}
     </div>`;
   $('#back').onclick=renderStaff;
-  if(canReorder){
-    const tbody=b.querySelector('table.lines tbody');
-    const renumber=()=>{ let k=0; tbody.querySelectorAll('tr[data-c2]').forEach(tr=>{ const s=tr.querySelector('.l222no'); if(s) s.textContent=++k; }); };
-    let saving=Promise.resolve();
-    const persist=()=>{
-      const ids=[...tbody.querySelectorAll('tr[data-lineid]')].map(tr=>tr.dataset.lineid);
-      // Row inputs on this screen look lines up by their original index, so only update the numbers in place.
-      const byId=new Map(o.order_lines.map(l=>[String(l.id),l])); ids.forEach((id,i)=>{ const l=byId.get(id); if(l) l.dea_line_no=i+1; });
-      saving=saving.then(async()=>{
-        for(let i=0;i<ids.length;i++){
-          const { error }=await db.from('order_lines').update({ dea_line_no:i+1 }).eq('id',ids[i]);
-          if(error){ toast(/dea_line_no/.test(error.message)?'Could not save the line order — run 59_order_lines_dea_line_no.sql in Supabase first.':'Could not save the line order: '+error.message, true); return; }
-        }
-        toast('DEA 222 line order saved.');
-      });
-    };
-    tbody.querySelectorAll('[data-lmove]').forEach(btn=>btn.onclick=()=>{
-      const tr=btn.closest('tr'), dir=+btn.dataset.lmove;
-      const c2=[...tbody.querySelectorAll('tr[data-c2]')], i=c2.indexOf(tr), j=i+dir;
-      if(j<0||j>=c2.length) return;
-      const other=c2[j];
-      if(dir<0) other.before(tr); else other.after(tr);
-      renumber(); persist();
-    });
-  }
   { const d=$('#delOrder'); if(d) d.onclick=()=>deleteOrder(o.id); }
   { const d=$('[data-shipdeliver]'); if(d) d.onclick=()=>logDelivery(o); }
   { const d=$('[data-shipdoc]'); if(d) d.onclick=()=>printDelivery(o.id); }
