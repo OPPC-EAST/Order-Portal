@@ -1476,7 +1476,8 @@ function invoiceDoc(o, rx){
   // quantities exactly like the Wholesale Order Request ("20 TABLETS", "25 VIALS") and drop the Pack column.
   const unitQty = !!o.created_by_pharmacy && !!cc.allow_partial_qty;
   const pages=classes.map(([key,label,tag])=>{
-    const lines=o.order_lines.filter(l=>schClass((l.medications||{}).schedule)===key);
+    // Lines approved at 0 (could not be fulfilled) are left off the invoice entirely.
+    const lines=o.order_lines.filter(l=>schClass((l.medications||{}).schedule)===key && !(l.approved_qty!=null && +l.approved_qty===0));
     if(!lines.length) return '';
     const rows=lines.map(l=>{ const m=l.medications||{}; const ndcPlain=(l.ndc||'').replace(/-/g,''); const inForm=o._ccNdcs&&o._ccNdcs.has(ndcPlain); const star=(l.ndc_one_time&&!inForm)?' <span class="ndcnew" title="New / substituted NDC — not on this facility\'s formulary">NEW</span>':'';
       const nameTd=`<td>${esc(m.name)}<div class="s">${esc(m.strength||'')} · ${esc(m.form||'')}</div></td><td class="mono">${esc(ndcPlain||'—')}${star}</td>`;
@@ -2816,6 +2817,63 @@ async function copyNextUnit(){
   COPY_FLOW=true;   // tells openCheckout this is part of a copy run (don't clear the queue)
   openCheckout();
 }
+// ---- Change only the strength of an order line (pharmacy) ----
+// Swaps the line to the same drug + dosage form at another strength from the master list. The drug
+// itself can't change. Requires a second confirmation and initials; every change is logged
+// (original → new strength, initials, user, date/time) in order_events as 'strength_changed'.
+async function changeLineStrength(o, i){
+  const l=o.order_lines[i]; if(!l) return; const m=l.medications||{};
+  const norm=v=>String(v||'').trim().toLowerCase();
+  const { data:cands, error }=await db.from('medications').select('id,name,strength,form,schedule,pack,package_size,active').ilike('name', m.name||'');
+  if(error) return toast('Could not load strengths: '+error.message, true);
+  const onOrder=new Set(o.order_lines.map(x=>x.medication_id));
+  const opts=(cands||[]).filter(c=>norm(c.name)===norm(m.name) && norm(c.form)===norm(m.form) && c.id!==l.medication_id && c.active!==false && !onOrder.has(c.id))
+    .sort((a,b)=>String(a.strength||'').localeCompare(String(b.strength||''),undefined,{numeric:true}));
+  if(!opts.length) return uiAlert('No other strengths','There are no other strengths of <b>'+esc(m.name)+'</b> ('+esc(m.form||'')+') on the master list that aren’t already on this order.');
+  // Step 1 — pick the new strength
+  const pick=await new Promise(res=>{
+    const ov=modal(`<h3 style="margin:0 0 6px">Change strength</h3>
+      <div style="font-size:13.5px;margin-bottom:10px"><b>${esc(m.name)}</b> · ${esc(m.form||'')}<br><span class="muted">Current strength:</span> <b>${esc(m.strength||'—')}</b></div>
+      <label style="display:block;font-size:12.5px;font-weight:600;margin-bottom:4px">New strength</label>
+      <select id="csSel" style="width:100%">${opts.map(c=>`<option value="${c.id}">${esc(c.strength||'—')}${packShort(c)?' — '+esc(packShort(c)):''}</option>`).join('')}</select>
+      <div class="muted" style="font-size:12px;margin-top:8px">Only the strength can change — the drug and dosage form stay the same.</div>
+      <div class="m-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn-ghost" id="csCancel">Cancel</button><button class="btn-primary" id="csNext">Continue</button></div>`, 440);
+    let done=false; const fin=v=>{ if(done) return; done=true; ov.remove(); res(v); };
+    ov.querySelector('#csCancel').onclick=()=>fin(null);
+    ov.querySelector('#csNext').onclick=()=>fin(opts.find(c=>c.id===ov.querySelector('#csSel').value)||null);
+    const mo=new MutationObserver(()=>{ if(!document.body.contains(ov)){ mo.disconnect(); fin(null); } }); mo.observe(document.body,{childList:true,subtree:true});
+  });
+  if(!pick) return;
+  // Step 2 — second confirmation + initials
+  const isC2=m.schedule==='CII'||pick.schedule==='CII';
+  const ini=await new Promise(res=>{
+    const ov=modal(`<h3 style="margin:0 0 6px">Confirm strength change</h3>
+      <table style="width:100%;font-size:13.5px;margin:6px 0 10px"><tr><td class="muted" style="width:90px">Drug</td><td><b>${esc(m.name)}</b> · ${esc(m.form||'')}</td></tr>
+        <tr><td class="muted">From</td><td><b style="color:#c0392b">${esc(m.strength||'—')}</b></td></tr>
+        <tr><td class="muted">To</td><td><b style="color:#1d7a4a">${esc(pick.strength||'—')}</b>${packShort(pick)?' <span class="muted">('+esc(packShort(pick))+')</span>':''}</td></tr></table>
+      <div class="note" style="font-size:12.5px;line-height:1.5">The NDC on this line will be cleared so the correct one can be selected. Quantities stay as they are — check them against the new package size.${isC2?'<br><b>Schedule II:</b> the strength on the hospice’s DEA 222 must match. A corrected 222 may be needed.':''}</div>
+      <label style="display:block;font-size:12.5px;font-weight:600;margin:12px 0 4px">Your initials (required for the audit log)</label>
+      <input id="csIni" maxlength="5" placeholder="e.g. JD" style="width:100%;text-transform:uppercase">
+      <div id="csErr" style="color:#c0392b;font-size:12.5px;min-height:16px;margin-top:4px"></div>
+      <div class="m-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button class="btn-ghost" id="csCancel2">Cancel</button><button class="btn-primary" id="csOk">Change strength</button></div>`, 460);
+    let done=false; const fin=v=>{ if(done) return; done=true; ov.remove(); res(v); };
+    ov.querySelector('#csCancel2').onclick=()=>fin(null);
+    const ok=()=>{ const v=ov.querySelector('#csIni').value.trim().toUpperCase(); if(!v){ ov.querySelector('#csErr').textContent='Enter your initials to confirm.'; return; } fin(v); };
+    ov.querySelector('#csOk').onclick=ok; ov.querySelector('#csIni').addEventListener('keydown',e=>{ if(e.key==='Enter') ok(); });
+    const mo=new MutationObserver(()=>{ if(!document.body.contains(ov)){ mo.disconnect(); fin(null); } }); mo.observe(document.body,{childList:true,subtree:true});
+    setTimeout(()=>{ const x=ov.querySelector('#csIni'); if(x) x.focus(); },30);
+  });
+  if(!ini) return;
+  const { data:fresh }=await db.from('orders').select('status').eq('id',o.id).maybeSingle();
+  if(fresh && !['submitted','review','approved','dea'].includes(fresh.status)) return toast('This order has moved on, so the strength can no longer be changed.', true);
+  const { error:ue }=await db.from('order_lines').update({ medication_id:pick.id, ndc:null }).eq('id',l.id);
+  if(ue) return toast('Could not change the strength: '+ue.message, true);
+  const note=`${m.name} (${m.form||''}): strength changed from ${m.strength||'—'} to ${pick.strength||'—'} · initials ${ini}`;
+  const { error:ee }=await db.from('order_events').insert({ order_id:o.id, type:'strength_changed', actor_id:ME.userId, actor_name:(ME.fullName||'')+' · '+ini, note });
+  if(ee) toast('Strength changed, but the audit entry could not be saved: '+ee.message, true);
+  else toast('Strength changed to '+(pick.strength||'')+' — select the NDC for the new strength.');
+  openOrder(o.id);
+}
 // ---- Reorder a completed order ----
 // Loads the original order's items + requested quantities into a NEW cart (the original order is never
 // touched). The user can add/remove/adjust before submitting through the normal checkout, which creates
@@ -3506,6 +3564,8 @@ async function openOrder(id){
     .eq('id',id).single();
   if(error){ b.innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
   sortOrderLines(o);
+  { const { data:sc }=await db.from('order_events').select('created_at,actor_name,note').eq('order_id',id).eq('type','strength_changed').order('created_at');
+    o._strengthLog=Array.isArray(sc)?sc:[]; }
   ACTIVE_ORDER=o;
   // Show the line items alphabetically by medication name.
   (o.order_lines||[]).sort((a,b)=>{ const ma=a.medications||{}, mb=b.medications||{}; return ((ma.name||'')+' '+(ma.strength||'')).localeCompare((mb.name||'')+' '+(mb.strength||''), undefined, {numeric:true}); });
@@ -3596,7 +3656,7 @@ async function openOrder(id){
           const postAdj=(l.cc_approved_qty!=null && l.approved_qty!==l.cc_approved_qty);   // re-adjusted after the hospice approved
           const postAdjNote='<div class="postadj-note" data-postadj="'+i+'" style="font-size:10px;color:#8a5a12;font-weight:800">'+(postAdj?('▲ changed after approval — hospice approved '+l.cc_approved_qty):'')+'</div>';
           return `<tr data-lineid="${l.id}">
-            <td><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(packShort(m))}</div></td>
+            <td><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(packShort(m))}</div>${ndcEditable?`<button type="button" data-chgstr="${i}" title="Change only the strength of this drug (initials required)" style="border:none;background:none;padding:2px 0;color:var(--brand);font-size:11.5px;font-weight:700;cursor:pointer">✎ Change strength</button>`:''}</td>
             <td>${schBadge(m.schedule)}</td>
             <td>${ndcEditable?(()=>{ const own=(ndcDir[l.medication_id]||[]); const lbl=[m.strength,m.form].filter(Boolean).join(' · '); const hasDir=ndcDirAll.length>0; return `<input data-ndc="${i}" ${hasDir?'list="ndcDirList"':''} value="${esc(l.ndc||'')}" placeholder="${hasDir?'select or type NDC…':'type NDC…'}" style="width:170px;font-family:var(--mono);font-size:12px">${hasDir?`<div class="muted" style="font-size:10.5px">${own.length?own.length+' on file for this drug · ':''}${esc(lbl)}</div>`:''}`; })():`<span class="mono" style="font-family:var(--mono);font-size:12px">${esc(l.ndc||'—')}</span>`}${l.ndc_one_time?'<div class="muted" style="font-size:10.5px;color:var(--amber)">↺ one-time (this order)</div>':''}</td>
             ${qtyStage?`<td style="text-align:right">${l.requested_qty}</td>
@@ -3605,6 +3665,9 @@ async function openOrder(id){
           </tr>`;}).join('')}
         </tbody>
       </table>${ndcDirListHtml}
+      ${(o._strengthLog&&o._strengthLog.length)?`<div style="margin-top:12px;border:1px solid #f0d9a8;background:#fffaf0;border-radius:8px;padding:10px 12px">
+        <div style="font-size:12.5px;font-weight:800;color:#8a5a12;margin-bottom:4px">✎ Strength change log</div>
+        ${o._strengthLog.map(e=>`<div style="font-size:12.5px;line-height:1.5">${esc(new Date(e.created_at).toLocaleString())} — ${esc(e.note||'')}${e.actor_name?' <span class="muted">('+esc(e.actor_name)+')</span>':''}</div>`).join('')}</div>`:''}
     </div>
     ${(o.status==='ordered' || (o.status==='shipped' && SHIP_EDIT===o.id)) ? prepareShipCard(o)
       : (ship&&ship.shipped?`<div class="card" style="padding:16px 18px;margin-top:14px;border:1px solid #cdd9e0">
@@ -3621,6 +3684,7 @@ async function openOrder(id){
     ${approvedPlus0?`<div id="ffPanel" style="flex:0 0 330px;max-width:330px;min-width:280px">${fulfillmentPanel(o)}</div>`:''}
     </div>`;
   $('#back').onclick=renderStaff;
+  b.querySelectorAll('[data-chgstr]').forEach(x=>x.onclick=()=>changeLineStrength(o, +x.dataset.chgstr));
   { const d=$('#delOrder'); if(d) d.onclick=()=>deleteOrder(o.id); }
   { const d=$('[data-shipdeliver]'); if(d) d.onclick=()=>logDelivery(o); }
   { const d=$('[data-shipdoc]'); if(d) d.onclick=()=>printDelivery(o.id); }
