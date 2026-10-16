@@ -1534,7 +1534,7 @@ function dea222UnitMl(m){
   return null;
 }
 function dea222Items(o){
-  const s=o._shipment||{}; const shipDate = s.shipped ? (s.ship_date||'') : '';
+  const s=o._shipment||{}; const shipDate = s.ship_date || '';   // set when shipped, or by fulfillment step 8
   // When the care center allows partial (below-package) quantities:
   //  • Standard: Package Size = Qty Requested (total individual units, e.g. tablets/patches);
   //              No. of Packages = the Individual Unit Size (blank → 1).
@@ -2013,12 +2013,50 @@ function fulfillmentPanel(o){
     <div class="muted" style="font-size:12px;margin:2px 0 10px">Pharmacy-only — not visible to the hospice. Checking a step records who completed it.</div>
     <div>${rows}</div></div>`;
 }
+// Initials + ship date for step 8. Resolves {ini, date:'YYYY-MM-DD'} or null if cancelled.
+function promptInitialsAndShipDate(label, curDate){
+  return new Promise(res=>{
+    const today=new Date(); const iso=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    const ov=modal(`<h3 style="margin:0 0 6px">Complete step</h3>
+      <div style="font-size:13.5px;margin-bottom:12px">Mark <b>${esc(label)}</b> complete.</div>
+      <label style="display:block;font-size:12.5px;font-weight:600;margin-bottom:4px">Your initials</label>
+      <input id="psIni" placeholder="e.g. JD" maxlength="5" style="width:100%;margin-bottom:12px;text-transform:uppercase">
+      <label style="display:block;font-size:12.5px;font-weight:600;margin-bottom:4px">Date shipped</label>
+      <input id="psDate" type="date" value="${esc(curDate||iso(today))}" max="${iso(new Date(today.getTime()+86400000))}" style="width:100%">
+      <div class="muted" style="font-size:12px;margin-top:6px">Fills <b>Date Shipped</b> for every line on the supplier DEA 222.</div>
+      <div id="psErr" style="color:#c0392b;font-size:12.5px;min-height:16px;margin-top:6px"></div>
+      <div class="m-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px">
+        <button class="btn-ghost" id="psCancel">Cancel</button><button class="btn-primary" id="psOk">Confirm</button></div>`, 420);
+    let done=false; const finish=v=>{ if(done) return; done=true; ov.remove(); res(v); };
+    const x=ov.querySelector('.modal-x'); if(x) x.addEventListener('click',()=>finish(null));
+    ov.querySelector('#psCancel').onclick=()=>finish(null);
+    const ok=()=>{ const ini=ov.querySelector('#psIni').value.trim().toUpperCase(), d=ov.querySelector('#psDate').value;
+      if(!ini){ ov.querySelector('#psErr').textContent='Enter your initials.'; return; }
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ ov.querySelector('#psErr').textContent='Pick the date it shipped.'; return; }
+      finish({ ini, date:d }); };
+    ov.querySelector('#psOk').onclick=ok;
+    ov.querySelectorAll('input').forEach(i=>i.addEventListener('keydown',e=>{ if(e.key==='Enter') ok(); }));
+    // closing the modal any other way (✕ / backdrop) counts as cancel
+    const mo=new MutationObserver(()=>{ if(!document.body.contains(ov)){ mo.disconnect(); finish(null); } }); mo.observe(document.body,{childList:true,subtree:true});
+    setTimeout(()=>{ const i=ov.querySelector('#psIni'); if(i) i.focus(); },30);
+  });
+}
 function wireFulfillment(o){
   document.querySelectorAll('[data-ff]').forEach(cb=>cb.onchange=async()=>{
     const k=cb.dataset.ff, step=FULFILL_STEPS.find(s=>s.k===k);
     if(cb.checked){
-      const raw=await uiPrompt('Enter your initials to mark <b>'+esc(step.l)+'</b> complete:',{title:'Complete step',placeholder:'e.g. JD',okText:'Confirm'});
-      const ini=(raw||'').trim().toUpperCase();
+      let ini='';
+      if(k==='tracking'){
+        // Step 8 also records the ship date, which fills Date Shipped on the supplier DEA 222.
+        const r=await promptInitialsAndShipDate(step.l, (o._shipment&&o._shipment.ship_date)||'');
+        if(!r){ cb.checked=false; return; }
+        ini=r.ini;
+        const sh=await shipUpsert(o,{ ship_date:r.date });
+        if(!sh){ cb.checked=false; return; }
+      } else {
+        const raw=await uiPrompt('Enter your initials to mark <b>'+esc(step.l)+'</b> complete:',{title:'Complete step',placeholder:'e.g. JD',okText:'Confirm'});
+        ini=(raw||'').trim().toUpperCase();
+      }
       if(!ini){ cb.checked=false; return; }
       const { error }=await db.from('fulfillment_steps').upsert({ order_id:o.id, step_key:k, done:true, by_initials:ini, done_at:new Date().toISOString() },{ onConflict:'order_id,step_key' });
       if(error){ cb.checked=false; return toast(error.message); }
@@ -3843,7 +3881,7 @@ async function markShipped(o){
   }
   const today=new Date().toISOString().slice(0,10);
   const trackingStart=(o._shipment&&o._shipment.tracking_start)||nextBusinessDay(today);
-  const r=await shipUpsert(o,{ shipped:true, ship_date:today, tracking_start:trackingStart });
+  const r=await shipUpsert(o,{ shipped:true, ship_date:((o._shipment&&o._shipment.ship_date)||today), tracking_start:trackingStart });   // keep a date already entered at step 8
   if(!r) return;
   const { error } = await db.from('orders').update({ status:'shipped' }).eq('id',o.id);
   if(error) return toast('Error: '+error.message);
