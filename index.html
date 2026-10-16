@@ -77,7 +77,7 @@
   .cart-foot{padding:14px 16px;border-top:1px solid var(--line)}
   .qty.qty-sm button{padding:3px 8px;font-size:13px}
   .qty.qty-sm input{width:46px;padding:4px 2px;font-size:12.5px}
-  .fav{border:none;background:none;padding:2px 4px;font-size:20px;line-height:1;cursor:pointer;color:#b7c0cb;flex:none}
+  .fav{border:none;background:none;padding:2px 8px;font-size:22px;line-height:1;cursor:pointer;color:#b7c0cb;flex:none}
   .fav:hover{color:#e0607a}
   .fav.on{color:#e0245e}
   .favbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--line);background:#fbf6f8}
@@ -2341,11 +2341,11 @@ function drawMeds(){
       if(FAV_PLAN[m.id]==null) FAV_PLAN[m.id]=qn||cartStep(m.id);
       return `<div class="med-row">
       <input type="checkbox" class="favpick" data-pick="${m.id}"${FAV_PICK.has(m.id)?' checked':''} title="Select">
-      ${heart(m)}
       <div class="med-name">
         <div class="name"><b>${esc(m.name)}</b> <span class="muted" style="font-weight:500">${esc(m.strength||'')}</span> <b>${esc(m.form||'')}</b></div>
         <div class="sub">${schBadge(m.schedule)} <span class="muted">${esc(packLabel(m))}</span>${inc>1&&!freeQty?`<span class="badge" style="background:#eef4fb;border:1px solid #cfe0f0;color:#2c5d84">order in multiples of ${inc}</span>`:''}${qn?`<span class="badge" style="background:#e9f6ef;border:1px solid #bfe3cf;color:#1d7a4a">✓ ${qn} in cart</span>`:''}${notStocked?`<span class="badge" style="background:#fdecdd;border:1px solid #f0d3b0;color:#b4520a">✦ new to your formulary</span>`:''}</div>
       </div>
+      ${heart(m)}
       <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px">
         <span class="muted" style="font-size:10.5px;font-weight:700;letter-spacing:.03em">QTY TO ADD</span>
         <div class="qty" data-plan="${m.id}">
@@ -2357,11 +2357,11 @@ function drawMeds(){
     </div>`;
     }
     return `<div class="med-row">
-      ${heart(m)}
       <div class="med-name">
         <div class="name"><b>${esc(m.name)}</b> <span class="muted" style="font-weight:500">${esc(m.strength||'')}</span> <b>${esc(m.form||'')}</b></div>
         <div class="sub">${schBadge(m.schedule)} <span class="muted">${esc(packLabel(m))}</span>${inc>1&&!freeQty?`<span class="badge" style="background:#eef4fb;border:1px solid #cfe0f0;color:#2c5d84">order in multiples of ${inc}</span>`:''}${notStocked?`<span class="badge" style="background:#fdecdd;border:1px solid #f0d3b0;color:#b4520a" title="Not currently stocked in your Omnicell">✦ new to your formulary</span>`:''}${qn?`<span class="badge b-nc">✓ ${qn} in cart</span>`:''}</div>
       </div>
+      ${heart(m)}
       <div class="qty" data-med="${m.id}">
         <button data-act="dec">−</button>
         <input type="number" min="0" step="${freeQty?1:inc}" value="${qn}" data-inp>
