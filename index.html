@@ -3141,7 +3141,7 @@ function floorStockFormDoc(org, units, rx, rows){
     /* Compact print layout (applied while printing, and while measuring to fit one page) */
     .sp{display:none}
     body.pfit{font-size:11px} body.pfit .page{width:7.6in;max-width:none;padding:0 3px;margin:0;display:flex;flex-direction:column}
-    body.pfit .sp{display:block;flex:1 1 0;max-height:.45in} body.pfit .sp2{flex-grow:1.6;max-height:.7in}   /* share leftover room at the bottom of the page */
+    body.pfit .sp{display:block;flex:1 1 0;max-height:.4in} body.pfit .sp2{flex-grow:1;max-height:.4in}   /* even spacing between sections */   /* share leftover room at the bottom of the page */
     body.pfit .page > *{flex-shrink:0}
     body.pfit h2{margin:7px 0 3px;font-size:11px} body.pfit .hd{margin-bottom:5px;padding-bottom:5px;gap:12px} body.pfit .hd img{max-height:40px;max-width:160px} body.pfit .hd h1{font-size:14px} body.pfit .hd .sub{font-size:10.5px}
     body.pfit table.loc td{padding:3px 8px} body.pfit table.loc .s{margin-top:0} body.pfit table.meds td{padding:2px 8px;height:17px} body.pfit th{padding:3px 6px}
