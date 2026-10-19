@@ -3118,7 +3118,7 @@ function floorStockFormDoc(org, units, rx, rows){
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
     .hd{display:flex;align-items:center;gap:16px;border-bottom:3px solid #c8102e;padding-bottom:10px;margin-bottom:12px}
     .hd img{max-height:52px;max-width:200px;object-fit:contain}
-    .hd .t{flex:1;text-align:center;min-width:0} .hd h1{margin:0;font-size:15.5px;letter-spacing:.01em;white-space:nowrap} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
+    .hd .t{flex:1;text-align:center;min-width:0} .hd h1{margin:0;font-size:15px;letter-spacing:.01em;line-height:1.2} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
     h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px;color:#37506e}
     table{width:100%;border-collapse:collapse;table-layout:fixed} th,td{border:1px solid #b9c3cd;padding:6px 8px;vertical-align:middle;text-align:left;overflow-wrap:anywhere}
     th{background:#eef2f6;font-size:10px;text-transform:uppercase;letter-spacing:.03em;text-align:center;line-height:1.25}
@@ -3176,15 +3176,13 @@ function floorStockFormDoc(org, units, rx, rows){
   // Always print on ONE letter page: use the compact layout, then scale the page down if it is still too tall.
   (function(){
     var PH=10.15*96;                                   // printable height (11in − 0.3in margins), with a safety margin
-    var SP=[];   // elements whose spacing is stretched to use leftover room at the bottom of the page
-    function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom=''; resetSpace();
-      var bar=document.querySelector('.noprint'), bd=bar?bar.style.display:''; if(bar) bar.style.display='none';
-      pg.style.minHeight='0'; var sps=pg.querySelectorAll('.sp'); Array.prototype.forEach.call(sps,function(x){ x.style.display='none'; });
-      var z=1, h=pg.getBoundingClientRect().height;
-      // Shrink only when the list really is too long for one page (measured on screen, never during print layout).
-      for(var k=0;k<4 && h>PH*1.02;k++){ z=Math.max(0.6, z*(PH/h)*0.985); pg.style.zoom=z.toFixed(3); h=pg.getBoundingClientRect().height; if(z<=0.6) break; }
-      pg.style.minHeight=''; Array.prototype.forEach.call(sps,function(x){ x.style.display=''; });
-      if(bar) bar.style.display=bd; }
+    var SP=[];
+    // Deterministic fit: the compact print layout holds ~30 medication rows on one letter page.
+    // Only longer lists are scaled, by row count (no on-screen measuring, which varies by computer).
+    function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom='';
+      var n=pg.querySelectorAll('table.meds tbody tr').length, u=pg.querySelectorAll('table.loc tbody tr').length;
+      var need=300+u*30+n*20;                          // approx. height (px) of the compact layout
+      if(need>PH){ pg.style.zoom=Math.max(0.55, PH/need).toFixed(3); } }
     function resetSpace(){ while(SP.length){ var x=SP.pop(); x[0].style[x[1]]=x[2]; } }
     function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; resetSpace(); }
     var fitting=false;
