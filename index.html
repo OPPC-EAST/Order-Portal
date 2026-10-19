@@ -3111,7 +3111,7 @@ function floorStockFormDoc(org, units, rx, rows){
   const locRows=units.map(c=>{ const r=rxFor(c.id); return `<tr><td class="c">${box}</td>
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(fmtPhoneDash(c.phone)):''}</div></td>
       <td class="ctr">${esc(c.unit_mgr||'—')}</td><td class="ctr">${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
-  const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
+  const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td class="ctr"><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
       <td class="s2 ctr">${esc(r.package||'')}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Wholesale Purchasing - Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
@@ -3139,7 +3139,10 @@ function floorStockFormDoc(org, units, rx, rows){
     h2{break-after:avoid;page-break-after:avoid}
     @page{size:letter;margin:.3in}
     /* Compact print layout (applied while printing, and while measuring to fit one page) */
-    body.pfit{font-size:11px} body.pfit .page{width:7.9in;max-width:none;padding:0 3px;margin:0}
+    .sp{display:none}
+    body.pfit{font-size:11px} body.pfit .page{width:7.9in;max-width:none;padding:0 3px;margin:0;display:flex;flex-direction:column;min-height:10.2in}
+    body.pfit .sp{display:block;flex:1 1 0;max-height:.45in} body.pfit .sp2{flex-grow:1.6;max-height:.7in}   /* share leftover room at the bottom of the page */
+    body.pfit .page > *{flex-shrink:0}
     body.pfit h2{margin:7px 0 3px;font-size:11px} body.pfit .hd{margin-bottom:5px;padding-bottom:5px} body.pfit .hd img{max-height:40px}
     body.pfit table.loc td{padding:3px 8px} body.pfit table.loc .s{margin-top:0} body.pfit table.meds td{padding:2px 8px;height:17px} body.pfit th{padding:3px 6px}
     body.pfit .pick{gap:4px 28px;font-size:11px} body.pfit .pick div{min-height:16px} body.pfit .note{margin-top:4px;padding:3px 9px}
@@ -3151,9 +3154,9 @@ function floorStockFormDoc(org, units, rx, rows){
       <span style="flex:1">✎ <b>Everything on this form is editable</b> — click any text to change it, or select a row and delete it. Changes apply to this printout only; edit the saved list in the portal to keep them.</span>
       <button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
     <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>WHOLESALE PURCHASING - FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b style="white-space:nowrap">877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
-    <h2>1. Ship to — check one location</h2>
-    <table class="loc"><colgroup><col style="width:34px"><col><col style="width:22%"><col style="width:22%"></colgroup><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary 222 purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
-    <h2>2. Purchaser &amp; prescriber — check one of each</h2>
+    <div class="sp"></div><h2>1. Ship to — check one location</h2>
+    <table class="loc"><colgroup><col style="width:34px"><col><col style="width:22%"><col style="width:22%"></colgroup><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
+    <div class="sp"></div><h2>2. Purchaser &amp; prescriber — check one of each</h2>
     <div class="pick">
       <div>${box} Primary purchaser for the location checked above</div>
       <div>${box} Primary prescriber for the location checked above</div>
@@ -3162,23 +3165,27 @@ function floorStockFormDoc(org, units, rx, rows){
       <div></div>
       <div style="padding-left:20px">NPI / DEA: <span class="ln"></span></div>
     </div>
-    <h2>3. Medications — enter the number of packages</h2>
+    <div class="sp"></div><h2>3. Medications — enter the number of packages</h2>
     <table class="meds"><colgroup><col style="width:34px"><col><col style="width:24%"><col style="width:15%"></colgroup><thead><tr><th>#</th><th>Medication</th><th>Package</th><th>No. of packages</th></tr></thead><tbody>${medRows}</tbody></table>
     <div class="note">Quantity is the <b>number of packages</b> (see the Package column). Leave blank any medication you don’t need.${hasC2?' <b>Schedule II (C-II) items require a completed DEA Form 222</b> — fax it with this form.':''}</div>
-    <div class="close"><div class="ack">I acknowledge that ordering and accepting possession of these medications may require additional administrative and/or clinical review and documentation that I assume responsibility for.</div>
+    <div class="sp sp2"></div><div class="close"><div class="ack">I acknowledge that ordering and accepting possession of these medications may require additional administrative and/or clinical review and documentation that I assume responsibility for. I additionally authorize OnePoint Patient Care to adjust package sizes as needed, depending on the availability of each medication.</div>
     <div class="sig"><div><div class="ln"></div>Purchaser signature</div><div><div class="ln"></div>Printed name</div><div style="flex:.5"><div class="ln"></div>Date</div></div>
     <div class="foot">➤ Sign, date, and fax this form to OnePoint Patient Care: 877-791-6774</div></div>
   </div>
   <script>
   // Always print on ONE letter page: use the compact layout, then scale the page down if it is still too tall.
   (function(){
-    var PH=10.0*96;                                   // printable height (11in − 0.3in margins), with a safety margin
-    function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom='';
+    var PH=10.15*96;                                   // printable height (11in − 0.3in margins), with a safety margin
+    var SP=[];   // elements whose spacing is stretched to use leftover room at the bottom of the page
+    function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom=''; resetSpace();
       var bar=document.querySelector('.noprint'), bd=bar?bar.style.display:''; if(bar) bar.style.display='none';
-      var z=1;
-      for(var k=0;k<4;k++){ var h=pg.getBoundingClientRect().height; if(h<=PH) break; z=z*(PH/h)*0.985; pg.style.zoom=z.toFixed(3); }
+      pg.style.minHeight='0'; var sps=pg.querySelectorAll('.sp'); Array.prototype.forEach.call(sps,function(x){ x.style.display='none'; });
+      var z=1, h=pg.getBoundingClientRect().height;
+      for(var k=0;k<4 && h>PH;k++){ z=z*(PH/h)*0.985; pg.style.zoom=z.toFixed(3); h=pg.getBoundingClientRect().height; }
+      pg.style.minHeight=''; Array.prototype.forEach.call(sps,function(x){ x.style.display=''; });
       if(bar) bar.style.display=bd; }
-    function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; }
+    function resetSpace(){ while(SP.length){ var x=SP.pop(); x[0].style[x[1]]=x[2]; } }
+    function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; resetSpace(); }
     window.addEventListener('beforeprint', fit); window.addEventListener('afterprint', unfit);
     if(window.matchMedia){ var mq=window.matchMedia('print'); if(mq.addEventListener) mq.addEventListener('change',function(e){ if(e.matches) fit(); else unfit(); }); }
     window.__fitPrint=fit;
