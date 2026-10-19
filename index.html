@@ -3110,37 +3110,45 @@ function floorStockFormDoc(org, units, rx, rows){
   const box='<span class="cb"></span>';
   const locRows=units.map(c=>{ const r=rxFor(c.id); return `<tr><td class="c">${box}</td>
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(fmtPhoneDash(c.phone)):''}</div></td>
-      <td>${esc(c.unit_mgr||'—')}</td><td>${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
+      <td class="ctr">${esc(c.unit_mgr||'—')}</td><td class="ctr">${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
   const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
-      <td class="s2">${esc(r.package||'')}</td><td class="qty"></td></tr>`).join('');
+      <td class="s2 ctr">${esc(r.package||'')}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Wholesale Purchasing - Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
     .hd{display:flex;align-items:center;gap:16px;border-bottom:3px solid #c8102e;padding-bottom:10px;margin-bottom:12px}
     .hd img{max-height:52px;max-width:200px;object-fit:contain}
-    .hd .t{flex:1;text-align:center} .hd h1{margin:0;font-size:15.5px;letter-spacing:.01em;white-space:nowrap} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
+    .hd .t{flex:1;text-align:center;min-width:0} .hd h1{margin:0;font-size:15.5px;letter-spacing:.01em;white-space:nowrap} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
     h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px;color:#37506e}
-    table{width:100%;border-collapse:collapse} th,td{border:1px solid #b9c3cd;padding:5px 6px;vertical-align:top;text-align:left}
-    th{background:#eef2f6;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
-    td.c{text-align:center;width:30px} .s{font-size:10.5px;color:#4b5763;margin-top:1px} .s2{font-size:10.5px;color:#4b5763}
-    .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:nowrap} td.qty{width:90px}
+    table{width:100%;border-collapse:collapse;table-layout:fixed} th,td{border:1px solid #b9c3cd;padding:6px 8px;vertical-align:middle;text-align:left;overflow-wrap:anywhere}
+    th{background:#eef2f6;font-size:10px;text-transform:uppercase;letter-spacing:.03em;text-align:center;line-height:1.25}
+    thead{display:table-header-group}  /* repeat column headings if the list runs onto a second page */
+    td.c{text-align:center} td.ctr{text-align:center} .s{font-size:10.5px;color:#4b5763;margin-top:2px} .s2{font-size:11px;color:#3b4652}
+    table.loc td{padding:7px 8px} table.meds td{padding:5px 8px;height:24px} table.meds tbody tr:nth-child(even) td{background:#fafbfc}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:nowrap} td.qty{text-align:center}
     .cb{display:inline-block;width:13px;height:13px;border:1.5px solid #16232e;border-radius:2px;vertical-align:middle}
     .c2{font-size:9.5px;font-weight:800;color:#8b1a2b;border:1px solid #8b1a2b;border-radius:8px;padding:0 5px}
-    .pick{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;font-size:12px}
-    .pick div{display:flex;align-items:flex-end;gap:7px} .ln{flex:1;border-bottom:1px solid #16232e;min-width:120px;height:16px}
-    .sig{display:flex;gap:26px;margin-top:22px;font-size:11px} .sig div{flex:1} .sig .ln{height:24px}
+    .pick{display:grid;grid-template-columns:1fr 1fr;gap:12px 28px;font-size:12px;padding:2px 2px 0}
+    .pick div{display:flex;align-items:flex-end;gap:8px;min-height:20px} .ln{flex:1;border-bottom:1px solid #16232e;min-width:120px;height:16px}
+    .close{break-inside:avoid;page-break-inside:avoid}   /* keep acknowledgment + signatures together */
+    .sig{display:flex;gap:26px;margin-top:26px;font-size:10.5px;color:#4b5763} .sig > div{flex:1;text-align:center} .sig .ln{height:26px;margin-bottom:4px}
     .note{border:1px solid #f0d9a8;background:#fffaf0;border-radius:6px;padding:7px 9px;font-size:11px;margin-top:10px}
     .ack{margin-top:14px;border:1px solid #c9d6e6;background:#f4f8fc;border-radius:6px;padding:8px 10px;font-size:11.5px;line-height:1.45}
     .foot{margin-top:14px;text-align:center;font-size:12px;font-weight:700;color:#5c2530}
     [contenteditable]:focus{outline:none} .page [contenteditable="true"]:hover{background:#fffde8}
-    @media print{ .noprint{display:none} .page{padding:.35in .4in} tr{break-inside:avoid} }
+    h2{break-after:avoid;page-break-after:avoid}
+    @page{size:letter;margin:.3in}
+    @media print{ html,body{width:auto} .noprint{display:none !important} .page{padding:0 3px;max-width:none;width:auto} tr{break-inside:avoid}
+      body{font-size:11px} h2{margin:8px 0 4px;font-size:11.5px} .hd{margin-bottom:5px;padding-bottom:6px} .hd img{max-height:44px}
+      table.loc td{padding:3px 8px} table.loc .s{margin-top:0} table.meds td{padding:2px 8px;height:18px} th{padding:4px 6px}
+      .pick{gap:5px 28px;font-size:11.5px} .pick div{min-height:17px} .note{margin-top:5px;padding:4px 9px} .ack{margin-top:6px;padding:5px 10px;font-size:11px} .sig{margin-top:14px} .sig .ln{height:22px} .foot{margin-top:6px;font-size:11.5px} table.meds tbody tr:nth-child(even) td{-webkit-print-color-adjust:exact;print-color-adjust:exact} th{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
   </style></head><body><div class="page" contenteditable="true" spellcheck="false">
     <div class="noprint" contenteditable="false" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:8px 10px;background:#eef6ff;border:1px solid #cfe0f2;border-radius:6px;font-size:12px">
       <span style="flex:1">✎ <b>Everything on this form is editable</b> — click any text to change it, or select a row and delete it. Changes apply to this printout only; edit the saved list in the portal to keep them.</span>
       <button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
-    <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>WHOLESALE PURCHASING - FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b>877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
+    <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>WHOLESALE PURCHASING - FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b style="white-space:nowrap">877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
     <h2>1. Ship to — check one location</h2>
-    <table><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary 222 purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
+    <table class="loc"><colgroup><col style="width:34px"><col><col style="width:22%"><col style="width:22%"></colgroup><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary 222 purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
     <h2>2. Purchaser &amp; prescriber — check one of each</h2>
     <div class="pick">
       <div>${box} Primary purchaser for the location checked above</div>
@@ -3151,11 +3159,11 @@ function floorStockFormDoc(org, units, rx, rows){
       <div style="padding-left:20px">NPI / DEA: <span class="ln"></span></div>
     </div>
     <h2>3. Medications — enter the number of packages</h2>
-    <table><thead><tr><th>#</th><th>Medication</th><th>Package</th><th>No. of packages</th></tr></thead><tbody>${medRows}</tbody></table>
+    <table class="meds"><colgroup><col style="width:34px"><col><col style="width:24%"><col style="width:15%"></colgroup><thead><tr><th>#</th><th>Medication</th><th>Package</th><th>No. of packages</th></tr></thead><tbody>${medRows}</tbody></table>
     <div class="note">Quantity is the <b>number of packages</b> (see the Package column). Leave blank any medication you don’t need.${hasC2?' <b>Schedule II (C-II) items require a completed DEA Form 222</b> — fax it with this form.':''}</div>
-    <div class="ack">I acknowledge that ordering and accepting possession of these medications may require additional administrative and/or clinical review and documentation that I assume responsibility for.</div>
-    <div class="sig"><div><div class="ln"></div>Purchaser signature</div><div><div class="ln"></div>Printed name</div><div style="flex:.55"><div class="ln"></div>Date</div></div>
-    <div class="foot">➤ Sign, date, and fax this form to OnePoint Patient Care: 877-791-6774</div>
+    <div class="close"><div class="ack">I acknowledge that ordering and accepting possession of these medications may require additional administrative and/or clinical review and documentation that I assume responsibility for.</div>
+    <div class="sig"><div><div class="ln"></div>Purchaser signature</div><div><div class="ln"></div>Printed name</div><div style="flex:.5"><div class="ln"></div>Date</div></div>
+    <div class="foot">➤ Sign, date, and fax this form to OnePoint Patient Care: 877-791-6774</div></div>
   </div></body></html>`;
 }
 async function pharmacyReorder(orderId){
