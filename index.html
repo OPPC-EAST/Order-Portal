@@ -2916,30 +2916,30 @@ let PHARM_REORDER_FROM=null;
 let FLOOR_NDC={};
 // Reserve Care default floor stock list (from the wholesaler favorites list) — editable after loading.
 const FLOOR_DEFAULTS_RESERVE=[
- ['Acetaminophen 325 mg Tab','50 tablets','00536-1327-06'],
- ['Acetaminophen Cherry 160 mg/5 mL Solution','473 mL bottle','00904-7014-16'],
- ['Antacid Regular Strength Liquid','355 mL bottle','00536-1293-83'],
- ['Aspirin 81 mg Chewable Tab','36 tablets','00536-1008-36'],
- ['Biotene Dry Mouth Oral Rinse Fresh Mint','16 oz bottle','48582-0003-30'],
- ['Bisacodyl 10 mg Suppositories UD (Perrigo)','12 suppositories','00574-7050-12'],
- ['Diphenhydramine HCl 25 mg Capsule','100 capsules','69618-0024-01'],
- ['Docusate Sodium 100 mg Tab','100 tablets','00904-6750-60'],
- ['Fleet Glycerin Suppositories Laxative','24 suppositories','00132-0075-24'],
- ['Geri-Tussin S/F A/F Solution Cherry','16 oz bottle','57896-0693-16'],
- ['Good Neighbor Pharmacy Magnesium Citrate Laxative','12 × 10 oz bottles','46122-0740-38'],
- ['Guaifenesin-DM 10-100 mg Cherry Syrup','473 mL bottle','00536-1313-85'],
- ['Ibuprofen 200 mg Tab','100 tablets','00904-6747-59'],
- ['Insta-Glucose Gel','1.09 oz tube','24208-0024-02'],
- ['Melatonin 3 mg Tab','60 tablets','80681-0085-00'],
- ['Major Milk of Magnesia Saline Laxative Original Flavor','473 mL bottle','00904-0788-16'],
- ['Nystatin 100,000 units/mL Suspension','473 mL bottle','69315-0504-47'],
- ['Polyethylene Glycol 3350 Powder UD (Perrigo)','14 packets','45802-0868-66'],
- ['Refresh Classic Lubricant Eye Drops Single-Use Containers','30 × 0.01 oz','00023-0506-01'],
- ['Senna Laxative 8.6 mg Tab','100 tablets','71399-1017-01'],
- ['Simethicone 80 mg Chewable Tab','100 tablets','00904-7206-60'],
- ['Sodium Chloride 0.9% Irrigation Bag','4 × 3000 mL bags','00338-0047-47'],
- ['Sodium Chloride 0.9% Inhalation Vial UD','100 × 3 mL vials','76204-0300-03'],
- ['Sorbitol 70% Solution (Carolina)','16 oz bottle','46287-0500-01']];
+ ['Acetaminophen 325 mg Tab','50 tablets','00536132706'],
+ ['Acetaminophen Cherry 160 mg/5 mL Solution','473 mL bottle','00904701416'],
+ ['Antacid Regular Strength Liquid','355 mL bottle','00536129383'],
+ ['Aspirin 81 mg Chewable Tab','36 tablets','00536100836'],
+ ['Biotene Dry Mouth Oral Rinse Fresh Mint','16 oz bottle','48582000330'],
+ ['Bisacodyl 10 mg Suppositories UD (Perrigo)','12 suppositories','00574705012'],
+ ['Diphenhydramine HCl 25 mg Capsule','100 capsules','69618002401'],
+ ['Docusate Sodium 100 mg Tab','100 tablets','00904675060'],
+ ['Fleet Glycerin Suppositories Laxative','24 suppositories','00132007524'],
+ ['Geri-Tussin S/F A/F Solution Cherry','16 oz bottle','57896069316'],
+ ['Good Neighbor Pharmacy Magnesium Citrate Laxative','12 × 10 oz bottles','46122074038'],
+ ['Guaifenesin-DM 10-100 mg Cherry Syrup','473 mL bottle','00536131385'],
+ ['Ibuprofen 200 mg Tab','100 tablets','00904674759'],
+ ['Insta-Glucose Gel','1.09 oz tube','24208002402'],
+ ['Melatonin 3 mg Tab','60 tablets','80681008500'],
+ ['Major Milk of Magnesia Saline Laxative Original Flavor','473 mL bottle','00904078816'],
+ ['Nystatin 100,000 units/mL Suspension','473 mL bottle','69315050447'],
+ ['Polyethylene Glycol 3350 Powder UD (Perrigo)','14 packets','45802086866'],
+ ['Refresh Classic Lubricant Eye Drops Single-Use Containers','30 × 0.01 oz','00023050601'],
+ ['Senna Laxative 8.6 mg Tab','100 tablets','71399101701'],
+ ['Simethicone 80 mg Chewable Tab','100 tablets','00904720660'],
+ ['Sodium Chloride 0.9% Irrigation Bag','4 × 3000 mL bags','00338004747'],
+ ['Sodium Chloride 0.9% Inhalation Vial UD','100 × 3 mL vials','76204030003'],
+ ['Sorbitol 70% Solution (Carolina)','16 oz bottle','46287050001']];
 async function floorStockModal(){
   await loadMeds();
   const { data:orgs, error:oe }=await db.from('organizations').select('id,name,logo_url').order('name');
@@ -2979,7 +2979,7 @@ async function floorStockModal(){
     tableMissing=!!ie;
     units=(cc||[]).filter(c=>c.active!==false);
     items=(it||[]).map(r=>{ const m=r.medication_id?medById(String(r.medication_id)):null;
-      return { medication_id:m?m.id:null, description:r.description||(m?medLabel(m):''), package:r.package||(m?packShort(m):''), ndc:r.ndc||'', pkgs:'' }; });
+      return { medication_id:m?m.id:null, description:r.description||(m?medLabel(m):''), package:r.package||(m?packShort(m):''), ndc:String(r.ndc||'').replace(/\D/g,''), pkgs:'' }; });
     // Nothing saved yet → always show the full default template.
     usingDefaults=false; locked=true;
     const defs=defaultsFor(org);
@@ -3035,7 +3035,9 @@ async function floorStockModal(){
         else { await load(); return; } }
       locked=true; draw(); };
     const mark=()=>{ dirty=true; const b=body.querySelector('#fsSave'); if(b && !/\*$/.test(b.textContent)) b.textContent='💾 Save list *'; };
-    body.querySelectorAll('[data-fsf]').forEach(x=>x.oninput=()=>{ const f=x.dataset.fsf; items[+x.dataset.i][f]=f==='pkgs'?x.value:x.value; if(f!=='pkgs') mark(); });
+    body.querySelectorAll('[data-fsf]').forEach(x=>x.oninput=()=>{ const f=x.dataset.fsf; let v=x.value;
+      if(f==='ndc'){ const d=v.replace(/\D/g,''); if(d!==v){ const pos=x.selectionStart; x.value=d; try{ x.setSelectionRange(Math.max(0,pos-1),Math.max(0,pos-1)); }catch(e){} } v=d; }   // NDCs are digits only
+      items[+x.dataset.i][f]=v; if(f!=='pkgs') mark(); });
     body.querySelectorAll('[data-fslink]').forEach(x=>x.onchange=()=>{ const v=x.value.trim().toLowerCase(); const m=MEDS.find(mm=>medLabel(mm).toLowerCase()===v);
       if(!m){ if(v) toast('Pick a medication from the list.', true); return; } items[+x.dataset.fslink].medication_id=m.id; dirty=true; draw(); });
     body.querySelectorAll('[data-fsunlink]').forEach(x=>x.onclick=()=>{ items[+x.dataset.fsunlink].medication_id=null; dirty=true; draw(); });
@@ -3060,7 +3062,7 @@ async function floorStockModal(){
     const rows=items.filter(r=>String(r.description||'').trim()||r.medication_id);
     const { error:de }=await db.from('floor_stock_items').delete().eq('org_id',org.id);
     if(de) return toast('Could not save: '+de.message, true);
-    if(rows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').trim()||null, sort_no:i+1 })));
+    if(rows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').replace(/\D/g,'')||null, sort_no:i+1 })));
       if(ie) return toast('Could not save: '+ie.message+(/description|package|null value/i.test(ie.message)?' — run the updated 60b_floor_stock.sql.':''), true); }
     items=rows; dirty=false; usingDefaults=false; toast('Floor stock list saved for '+org.name+'.'); draw();
   }
@@ -3095,7 +3097,11 @@ async function floorStockModal(){
   };
   load();
 }
+// "Reserve Care Hospice - Ames Family House - Omnicell 1" and "… - Omnicell 2" are one ship-to location.
+function shipLocationName(n){ return String(n||'').replace(/\s*[-–—]\s*Omnicell\s*\d+\s*$/i,'').trim(); }
 function floorStockFormDoc(org, units, rx, rows){
+  { const seen=new Map(); units.forEach(c=>{ const k=shipLocationName(c.name).toLowerCase(); if(!seen.has(k)) seen.set(k, Object.assign({}, c, { name:shipLocationName(c.name) })); });
+    units=[...seen.values()]; }
   const rxFor=id=>{ const l=rx.filter(r=>r.care_center_id===id); return l.find(r=>r.is_primary)||l[0]||null; };
   const rxName=r=>r?[r.first_name,r.last_name].filter(Boolean).join(' '):'';
   const hasC2=rows.some(r=>r.c2);
@@ -3104,7 +3110,7 @@ function floorStockFormDoc(org, units, rx, rows){
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(c.phone):''}</div><div class="s">DEA ${esc(c.facility_dea||'—')} · Permit ${esc(c.permit||'—')}</div></td>
       <td>${esc(c.unit_mgr||'—')}</td><td>${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
   const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
-      <td class="s2">${esc(r.package||'')}</td><td class="mono">${esc(r.ndc||'')}</td><td class="qty"></td></tr>`).join('');
+      <td class="s2">${esc(r.package||'')}</td><td class="mono">${esc(String(r.ndc||'').replace(/\D/g,''))}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
