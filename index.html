@@ -3172,11 +3172,12 @@ function floorStockFormDoc(org, units, rx, rows){
   <script>
   // Always print on ONE letter page: use the compact layout, then scale the page down if it is still too tall.
   (function(){
-    var PH=10.1*96;                                   // printable height (11in − 0.3in margins, with a little room for browser headers)
+    var PH=10.0*96;                                   // printable height (11in − 0.3in margins), with a safety margin
     function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom='';
       var bar=document.querySelector('.noprint'), bd=bar?bar.style.display:''; if(bar) bar.style.display='none';
-      var h=pg.scrollHeight; if(bar) bar.style.display=bd;
-      if(h>PH) pg.style.zoom=(Math.floor(PH/h*1000)/1000*0.985).toFixed(3); }
+      var z=1;
+      for(var k=0;k<4;k++){ var h=pg.getBoundingClientRect().height; if(h<=PH) break; z=z*(PH/h)*0.985; pg.style.zoom=z.toFixed(3); }
+      if(bar) bar.style.display=bd; }
     function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; }
     window.addEventListener('beforeprint', fit); window.addEventListener('afterprint', unfit);
     if(window.matchMedia){ var mq=window.matchMedia('print'); if(mq.addEventListener) mq.addEventListener('change',function(e){ if(e.matches) fit(); else unfit(); }); }
