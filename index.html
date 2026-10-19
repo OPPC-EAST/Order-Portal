@@ -2947,6 +2947,20 @@ async function floorStockModal(){
   const list=(orgs||[]); if(!list.length) return toast('No organizations found.', true);
   let org=list.find(o=>/reserve/i.test(o.name||''))||list[0];
   let items=[], units=[], dirty=false, tableMissing=false, locked=true, usingDefaults=false;
+  // Fax-form ship-to overrides per location (cabinets "… - Omnicell 1/2" share one location).
+  // Saved in floor_stock_items as rows with medication_id 'loc:<location>' (package = purchaser, ndc = prescriber).
+  let locOv={}, rxAll=[];
+  // One entry per ship-to location, with the purchaser/prescriber choices from its cabinets.
+  function shipLocs(){
+    const map=new Map();
+    units.forEach(c=>{ const nm=shipLocationName(c.name), k=nm.toLowerCase();
+      if(!map.has(k)) map.set(k,{ key:k, name:nm, cc:c, purch:[], presc:[] });
+      const L=map.get(k);
+      [c.unit_mgr, c.unit_mgr2].concat(Array.isArray(c.extra_unit_mgrs)?c.extra_unit_mgrs.map(x=>x&&(x.name||x)):[]).forEach(n=>{ n=String(n||'').trim(); if(n && !L.purch.includes(n)) L.purch.push(n); });
+      rxAll.filter(r=>r.care_center_id===c.id).sort((a,b)=>(b.is_primary?1:0)-(a.is_primary?1:0)).forEach(r=>{ const n=[r.first_name,r.last_name].filter(Boolean).join(' '); if(n && !L.presc.includes(n)) L.presc.push(n); }); });
+    return [...map.values()];
+  }
+  const LOC_PREFIX='loc:';
   const medLabel=m=>[m.name,m.strength,m.form].filter(Boolean).join(' ');
   const medById=id=>MEDS.find(x=>x.id===id)||null;
   const defaultsFor=o=>/reserve/i.test((o&&o.name)||'') ? FLOOR_DEFAULTS_RESERVE : null;
@@ -2973,11 +2987,16 @@ async function floorStockModal(){
     return idx; }
   async function load(){
     body.innerHTML='<div class="empty">Loading…</div>'; dirty=false;
-    const [{ data:it, error:ie },{ data:cc }]=await Promise.all([
+    let [{ data:it, error:ie },{ data:cc }]=await Promise.all([
       db.from('floor_stock_items').select('*').eq('org_id',org.id).order('sort_no'),
       db.from('care_centers').select('*').eq('org_id',org.id).order('name')]);
     tableMissing=!!ie;
     units=(cc||[]).filter(c=>c.active!==false);
+    { const ids=units.map(c=>c.id); const { data:rx }=ids.length?await db.from('prescribers').select('*').in('care_center_id',ids):{data:[]}; rxAll=rx||[]; }
+    locOv={}; (it||[]).filter(r=>String(r.medication_id||'').startsWith(LOC_PREFIX)).forEach(r=>{ locOv[String(r.medication_id).slice(LOC_PREFIX.length)]={ purchaser:r.package||'', prescriber:r.ndc||'' }; });
+    it=(it||[]).filter(r=>!String(r.medication_id||'').startsWith(LOC_PREFIX));
+    // Reserve Care default: Ames Family House's fax-form purchaser is Pam McNally (until changed and saved).
+    if(/reserve/i.test(org.name||'')){ const ak='reserve care hospice - ames family house'; if(!(locOv[ak]&&locOv[ak].purchaser)) locOv[ak]=Object.assign({},locOv[ak],{purchaser:'Pam McNally'}); }
     items=(it||[]).map(r=>{ const m=r.medication_id?medById(String(r.medication_id)):null;
       return { medication_id:m?m.id:null, description:r.description||(m?medLabel(m):''), package:r.package||(m?packShort(m):''), ndc:String(r.ndc||'').replace(/\D/g,''), pkgs:'' }; });
     // Nothing saved yet → always show the full default template.
@@ -3028,6 +3047,15 @@ async function floorStockModal(){
         <select id="fsUnit" style="min-width:260px">${unitOpts||'<option value="">No locations</option>'}</select>
         <span class="muted" style="font-size:12px;flex:1;min-width:180px">Enter the number of packages (Pkgs) from the faxed form, then create the order.</span>
         <button class="btn-primary btn-sm" id="fsOrder">Create order →</button>
+      </div>
+      <div style="margin-top:14px;padding-top:12px;border-top:1px solid #e3e8ee">
+        <b style="font-size:13px">Fax form — ship-to locations</b> <span class="muted" style="font-size:12px">Primary purchaser and prescriber printed for each location${locked?' · unlock to change':''}.</span>
+        <table class="lines" style="margin:6px 0 0"><thead><tr><th>Location</th><th style="width:30%">Primary purchaser</th><th style="width:30%">Primary prescriber</th></tr></thead><tbody>
+        ${shipLocs().map(L=>{ const ov=locOv[L.key]||{}; const pv=ov.purchaser||L.purch[0]||'', rv=ov.prescriber||L.presc[0]||'';
+          return `<tr><td><b>${esc(L.name)}</b></td>
+            <td>${locked?esc(pv||'—'):`<input data-locp="${esc(L.key)}" list="fsLp_${esc(L.key).replace(/[^a-z0-9]/g,'')}" value="${esc(pv)}" style="width:100%"><datalist id="fsLp_${esc(L.key).replace(/[^a-z0-9]/g,'')}">${L.purch.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>`}</td>
+            <td>${locked?esc(rv||'—'):`<input data-locr="${esc(L.key)}" list="fsLr_${esc(L.key).replace(/[^a-z0-9]/g,'')}" value="${esc(rv)}" style="width:100%"><datalist id="fsLr_${esc(L.key).replace(/[^a-z0-9]/g,'')}">${L.presc.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>`}</td></tr>`; }).join('')||'<tr><td colspan="3" class="muted">No locations on file.</td></tr>'}
+        </tbody></table>
       </div>`;
     body.querySelector('#fsLock').onclick=async()=>{
       if(locked){ locked=false; draw(); return; }
@@ -3035,6 +3063,8 @@ async function floorStockModal(){
         if(keep){ if(tableMissing) return toast('Run 60b_floor_stock.sql in Supabase to save the template.', true); await save(); if(dirty) return; }
         else { await load(); return; } }
       locked=true; draw(); };
+    body.querySelectorAll('[data-locp]').forEach(x=>x.oninput=()=>{ const k=x.dataset.locp; locOv[k]=Object.assign({},locOv[k],{purchaser:x.value.trim()}); mark(); });
+    body.querySelectorAll('[data-locr]').forEach(x=>x.oninput=()=>{ const k=x.dataset.locr; locOv[k]=Object.assign({},locOv[k],{prescriber:x.value.trim()}); mark(); });
     const mark=()=>{ dirty=true; const b=body.querySelector('#fsSave'); if(b && !/\*$/.test(b.textContent)) b.textContent='💾 Save list *'; };
     body.querySelectorAll('[data-fsf]').forEach(x=>x.oninput=()=>{ const f=x.dataset.fsf; let v=x.value;
       if(f==='ndc'){ const d=v.replace(/\D/g,''); if(d!==v){ const pos=x.selectionStart; x.value=d; try{ x.setSelectionRange(Math.max(0,pos-1),Math.max(0,pos-1)); }catch(e){} } v=d; }   // NDCs are digits only
@@ -3064,7 +3094,8 @@ async function floorStockModal(){
     const rows=items.filter(r=>String(r.description||'').trim()||r.medication_id);
     const { error:de }=await db.from('floor_stock_items').delete().eq('org_id',org.id);
     if(de) return toast('Could not save: '+de.message, true);
-    if(rows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').replace(/\D/g,'')||null, sort_no:i+1 })));
+    const locRows=Object.entries(locOv).filter(([k,v])=>v&&(v.purchaser||v.prescriber)).map(([k,v])=>({ org_id:org.id, medication_id:LOC_PREFIX+k, description:null, package:v.purchaser||null, ndc:v.prescriber||null, sort_no:0 }));
+    if(rows.length||locRows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').replace(/\D/g,'')||null, sort_no:i+1 })).concat(locRows));
       if(ie) return toast('Could not save: '+ie.message+(/description|package|null value/i.test(ie.message)?' — run the updated 60b_floor_stock.sql.':''), true); }
     items=rows; dirty=false; usingDefaults=false; toast('Floor stock list saved for '+org.name+'.'); draw();
   }
@@ -3159,7 +3190,7 @@ async function floorStockModal(){
     if(!rows.length) return toast('Add items to the list first.', true);
     const ids=units.map(c=>c.id);
     const { data:rx }=ids.length?await db.from('prescribers').select('*').in('care_center_id',ids):{data:[]};
-    openDoc(floorStockFormDoc(org, units, rx||[], rows.map(r=>({ description:r.description, package:r.package, ndc:r.ndc, c2:!!(r.medication_id && (medById(r.medication_id)||{}).schedule==='CII') }))));
+    openDoc(floorStockFormDoc(org, units, rx||[], locOv, rows.map(r=>({ description:r.description, package:r.package, ndc:r.ndc, c2:!!(r.medication_id && (medById(r.medication_id)||{}).schedule==='CII') }))));
   };
   load();
 }
@@ -3167,16 +3198,22 @@ async function floorStockModal(){
 function fmtPhoneDash(p){ const d=String(p||'').replace(/\D/g,''); const t=(d.length===11&&d[0]==='1')?d.slice(1):d; return t.length===10?t.slice(0,3)+'-'+t.slice(3,6)+'-'+t.slice(6):String(p||''); }
 // "Reserve Care Hospice - Ames Family House - Omnicell 1" and "… - Omnicell 2" are one ship-to location.
 function shipLocationName(n){ return String(n||'').replace(/\s*[-–—]\s*Omnicell\s*\d+\s*$/i,'').trim(); }
-function floorStockFormDoc(org, units, rx, rows){
+function floorStockFormDoc(org, units, rx, locOv, rows){
+  if(!rows){ rows=locOv; locOv={}; } locOv=locOv||{};
+  const allUnits=units.slice();
   { const seen=new Map(); units.forEach(c=>{ const k=shipLocationName(c.name).toLowerCase(); if(!seen.has(k)) seen.set(k, Object.assign({}, c, { name:shipLocationName(c.name) })); });
     units=[...seen.values()]; }
   const rxFor=id=>{ const l=rx.filter(r=>r.care_center_id===id); return l.find(r=>r.is_primary)||l[0]||null; };
   const rxName=r=>r?[r.first_name,r.last_name].filter(Boolean).join(' '):'';
   const hasC2=rows.some(r=>r.c2);
   const box='<span class="cb"></span>';
-  const locRows=units.map(c=>{ const r=rxFor(c.id); return `<tr><td class="c">${box}</td>
+  // purchaser/prescriber per location: saved choice first, else the first cabinet's primary
+  const pickP=c=>{ const ov=locOv[c.name.toLowerCase()]; return (ov&&ov.purchaser)||c.unit_mgr||''; };
+  const pickR=c=>{ const ov=locOv[c.name.toLowerCase()]; if(ov&&ov.prescriber) return { name:ov.prescriber, npi:(rx.find(r=>[r.first_name,r.last_name].filter(Boolean).join(' ').toLowerCase()===ov.prescriber.toLowerCase())||{}).npi||'' };
+    const r=rxFor(c.id)||allUnits.filter(u=>shipLocationName(u.name).toLowerCase()===c.name.toLowerCase()).map(u=>rxFor(u.id)).find(Boolean); return r?{ name:rxName(r), npi:r.npi||'' }:null; };
+  const locRows=units.map(c=>{ const r=pickR(c); return `<tr><td class="c">${box}</td>
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(fmtPhoneDash(c.phone)):''}</div></td>
-      <td class="ctr">${esc(c.unit_mgr||'—')}</td><td class="ctr">${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
+      <td class="ctr">${esc(pickP(c)||'—')}</td><td class="ctr">${esc((r&&r.name)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
   const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td class="ctr"><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
       <td class="s2 ctr">${esc(String(r.package||'').toUpperCase())}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Wholesale Purchasing - Floor Stock Order Form — ${esc(org.name)}</title><style>
