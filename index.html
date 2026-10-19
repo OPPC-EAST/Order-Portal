@@ -2946,11 +2946,12 @@ async function floorStockModal(){
   if(oe) return toast('Could not load organizations: '+oe.message, true);
   const list=(orgs||[]); if(!list.length) return toast('No organizations found.', true);
   let org=list.find(o=>/reserve/i.test(o.name||''))||list[0];
-  let items=[], units=[], dirty=false, tableMissing=false;
+  let items=[], units=[], dirty=false, tableMissing=false, locked=true, usingDefaults=false;
   const medLabel=m=>[m.name,m.strength,m.form].filter(Boolean).join(' ');
   const medById=id=>MEDS.find(x=>x.id===id)||null;
+  const defaultsFor=o=>/reserve/i.test((o&&o.name)||'') ? FLOOR_DEFAULTS_RESERVE : null;
   const ov=modal(`<h3 style="margin:0 0 4px">🧺 Floor stock</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:10px">Every field is editable. Set the list and default NDCs, print the fax-back form, or start a floor stock order (quantity = number of packages). To order an item it must be linked to the master list.</div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:10px">The full floor stock template opens every time. Enter package counts to order, print the fax-back form, or click <b>Unlock to edit</b> to change any field on the template. To order an item it must be linked to the master list.</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <label style="font-size:12.5px;font-weight:600">Organization</label>
       <select id="fsOrg" style="min-width:240px">${list.map(o=>`<option value="${esc(o.id)}"${o.id===org.id?' selected':''}>${esc(o.name)}</option>`).join('')}</select>
@@ -2979,27 +2980,42 @@ async function floorStockModal(){
     units=(cc||[]).filter(c=>c.active!==false);
     items=(it||[]).map(r=>{ const m=r.medication_id?medById(String(r.medication_id)):null;
       return { medication_id:m?m.id:null, description:r.description||(m?medLabel(m):''), package:r.package||(m?packShort(m):''), ndc:r.ndc||'', pkgs:'' }; });
+    // Nothing saved yet → always show the full default template.
+    usingDefaults=false; locked=true;
+    const defs=defaultsFor(org);
+    if(!items.length && defs){ const idx=await ndcIndexFor();
+      items=defs.map(([d,p,n])=>{ const r={ medication_id:null, description:d, package:p, ndc:n, pkgs:'' }; r.medication_id=autoLink(r, idx); return r; });
+      usingDefaults=true; }
     draw();
   }
   function draw(){
     const unitOpts=units.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
-    const canDefault=/reserve/i.test(org.name||'');
-    body.innerHTML=`${tableMissing?'<div class="note" style="font-size:12.5px;margin-bottom:8px">Run <b>60b_floor_stock.sql</b> in Supabase to save floor stock lists. Until then you can still edit a list here to print or order, but it won’t be saved.</div>':''}
+    const canDefault=!!defaultsFor(org);
+    const ro=locked?' readonly tabindex="-1"':'';
+    const roStyle=locked?';border-color:transparent;background:transparent;box-shadow:none;padding-left:0':'';
+    body.innerHTML=`<div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+        ${locked?'<span class="badge" style="background:#eef2f6;border:1px solid #d7dee7;color:#37506e">🔒 Template locked</span><span class="muted" style="font-size:12px">Enter package counts below to order. Unlock to edit the template.</span>'
+                :'<span class="badge" style="background:#fff6e6;border:1px solid #f0d9a8;color:#8a5a12">🔓 Editing template</span><span class="muted" style="font-size:12px">Change any field, then Save list.</span>'}
+        ${usingDefaults?'<span class="muted" style="font-size:12px">· Showing the default list (not saved yet)</span>':''}
+        <span class="spacer" style="flex:1"></span>
+        <button class="btn-${locked?'primary':'ghost'} btn-sm" id="fsLock">${locked?'🔓 Unlock to edit':'🔒 Lock template'}</button>
+      </div>
+      ${tableMissing?'<div class="note" style="font-size:12.5px;margin-bottom:8px">Run <b>60b_floor_stock.sql</b> in Supabase to save floor stock lists. Until then you can still edit a list here to print or order, but it won’t be saved.</div>':''}
       <div style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;max-height:50vh">
-      <table class="lines" style="margin:0"><thead><tr><th style="width:30px">#</th><th>Description</th><th style="width:150px">Package</th><th style="width:140px">Default NDC</th><th style="width:220px">Master list link</th><th style="width:80px;text-align:right">Pkgs</th><th style="width:94px"></th></tr></thead><tbody>
+      <table class="lines" style="margin:0"><thead><tr><th style="width:30px">#</th><th>Description</th><th style="width:150px">Package</th><th style="width:165px">Default NDC</th><th style="width:200px">Master list link</th><th style="width:80px;text-align:right">Pkgs</th><th style="width:94px"></th></tr></thead><tbody>
       ${items.length?items.map((r,i)=>{ const m=r.medication_id?medById(r.medication_id):null; return `<tr>
         <td class="muted">${i+1}</td>
-        <td><input data-fsf="description" data-i="${i}" value="${esc(r.description)}" placeholder="Medication description" style="width:100%;min-width:220px"></td>
-        <td><input data-fsf="package" data-i="${i}" value="${esc(r.package)}" placeholder="e.g. 100 tablets" style="width:100%"></td>
-        <td><input data-fsf="ndc" data-i="${i}" value="${esc(r.ndc)}" placeholder="NDC" style="width:100%;font-family:ui-monospace,monospace"></td>
-        <td>${m?`<div style="font-size:12px;line-height:1.3"><b>${esc(medLabel(m))}</b> ${schBadge(m.schedule)}<br><button type="button" data-fsunlink="${i}" style="border:none;background:none;padding:0;color:var(--brand);font-size:11px;font-weight:700;cursor:pointer">change link</button></div>`
-             :`<input data-fslink="${i}" list="fsMedDl" placeholder="Link to master list…" style="width:100%;border-color:#f0d3b0">`}</td>
+        <td><input data-fsf="description" data-i="${i}" value="${esc(r.description)}" placeholder="Medication description"${ro} style="width:100%;min-width:220px${roStyle};${locked?'font-weight:600':''}"></td>
+        <td><input data-fsf="package" data-i="${i}" value="${esc(r.package)}" placeholder="e.g. 100 tablets"${ro} style="width:100%${roStyle}"></td>
+        <td><input data-fsf="ndc" data-i="${i}" value="${esc(r.ndc)}" placeholder="NDC"${ro} style="width:100%;font-family:ui-monospace,monospace${roStyle}"></td>
+        <td>${m?`<div style="font-size:12px;line-height:1.3"><b>${esc(medLabel(m))}</b> ${schBadge(m.schedule)}${locked?'':`<br><button type="button" data-fsunlink="${i}" style="border:none;background:none;padding:0;color:var(--brand);font-size:11px;font-weight:700;cursor:pointer">change link</button>`}</div>`
+             :(locked?'<span class="muted" style="font-size:11.5px">Not linked — unlock to link</span>':`<input data-fslink="${i}" list="fsMedDl" placeholder="Link to master list…" style="width:100%;border-color:#f0d3b0">`)}</td>
         <td style="text-align:right"><input data-fsf="pkgs" data-i="${i}" type="number" min="0" step="1" value="${esc(r.pkgs)}" placeholder="0" style="width:62px;text-align:right"></td>
-        <td style="white-space:nowrap"><button class="btn-ghost btn-sm" data-fsmv="-1" data-i="${i}" ${i===0?'disabled':''} style="padding:2px 6px">▲</button><button class="btn-ghost btn-sm" data-fsmv="1" data-i="${i}" ${i===items.length-1?'disabled':''} style="padding:2px 6px">▼</button><button class="btn-ghost btn-sm" data-fsrm="${i}" style="padding:2px 6px;color:#c0392b" title="Remove">✕</button></td></tr>`; }).join('')
+        <td style="white-space:nowrap">${locked?'':`<button class="btn-ghost btn-sm" data-fsmv="-1" data-i="${i}" ${i===0?'disabled':''} style="padding:2px 6px">▲</button><button class="btn-ghost btn-sm" data-fsmv="1" data-i="${i}" ${i===items.length-1?'disabled':''} style="padding:2px 6px">▼</button><button class="btn-ghost btn-sm" data-fsrm="${i}" style="padding:2px 6px;color:#c0392b" title="Remove">✕</button>`}</td></tr>`; }).join('')
         :`<tr><td colspan="7"><div class="empty" style="padding:22px">No items on this floor stock list yet.${canDefault?' <button class="btn-primary btn-sm" id="fsDefaults" style="margin-left:8px">Load Reserve Care default list ('+FLOOR_DEFAULTS_RESERVE.length+' items)</button>':''}</div></td></tr>`}
       </tbody></table></div>
       ${medsDl}
-      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+      <div style="display:${locked?'none':'flex'};gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
         <button class="btn-ghost btn-sm" id="fsAddBlank">＋ Add item</button>
         <input id="fsAdd" list="fsMedDl" placeholder="…or add straight from the master list" style="flex:1;min-width:240px">
         <button class="btn-ghost btn-sm" id="fsAddBtn">＋ Add from master list</button>
@@ -3012,6 +3028,12 @@ async function floorStockModal(){
         <span class="muted" style="font-size:12px;flex:1;min-width:180px">Enter the number of packages (Pkgs) from the faxed form, then create the order.</span>
         <button class="btn-primary btn-sm" id="fsOrder">Create order →</button>
       </div>`;
+    body.querySelector('#fsLock').onclick=async()=>{
+      if(locked){ locked=false; draw(); return; }
+      if(dirty){ const keep=await uiConfirm('Save your changes to the template before locking it?',{title:'Unsaved changes',okText:'Save & lock'});
+        if(keep){ if(tableMissing) return toast('Run 60b_floor_stock.sql in Supabase to save the template.', true); await save(); if(dirty) return; }
+        else { await load(); return; } }
+      locked=true; draw(); };
     const mark=()=>{ dirty=true; const b=body.querySelector('#fsSave'); if(b && !/\*$/.test(b.textContent)) b.textContent='💾 Save list *'; };
     body.querySelectorAll('[data-fsf]').forEach(x=>x.oninput=()=>{ const f=x.dataset.fsf; items[+x.dataset.i][f]=f==='pkgs'?x.value:x.value; if(f!=='pkgs') mark(); });
     body.querySelectorAll('[data-fslink]').forEach(x=>x.onchange=()=>{ const v=x.value.trim().toLowerCase(); const m=MEDS.find(mm=>medLabel(mm).toLowerCase()===v);
@@ -3040,7 +3062,7 @@ async function floorStockModal(){
     if(de) return toast('Could not save: '+de.message, true);
     if(rows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').trim()||null, sort_no:i+1 })));
       if(ie) return toast('Could not save: '+ie.message+(/description|package|null value/i.test(ie.message)?' — run the updated 60b_floor_stock.sql.':''), true); }
-    items=rows; dirty=false; toast('Floor stock list saved for '+org.name+'.'); draw();
+    items=rows; dirty=false; usingDefaults=false; toast('Floor stock list saved for '+org.name+'.'); draw();
   }
   async function startOrder(){
     const ccId=body.querySelector('#fsUnit').value; const cc=units.find(c=>c.id===ccId);
