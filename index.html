@@ -3110,7 +3110,7 @@ function floorStockFormDoc(org, units, rx, rows){
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(c.phone):''}</div><div class="s">DEA ${esc(c.facility_dea||'—')} · Permit ${esc(c.permit||'—')}</div></td>
       <td>${esc(c.unit_mgr||'—')}</td><td>${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
   const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
-      <td class="s2">${esc(r.package||'')}</td><td class="mono">${esc(String(r.ndc||'').replace(/\D/g,''))}</td><td class="qty"></td></tr>`).join('');
+      <td class="s2">${esc(r.package||'')}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
@@ -3128,6 +3128,7 @@ function floorStockFormDoc(org, units, rx, rows){
     .pick div{display:flex;align-items:flex-end;gap:7px} .ln{flex:1;border-bottom:1px solid #16232e;min-width:120px;height:16px}
     .sig{display:flex;gap:26px;margin-top:22px;font-size:11px} .sig div{flex:1} .sig .ln{height:24px}
     .note{border:1px solid #f0d9a8;background:#fffaf0;border-radius:6px;padding:7px 9px;font-size:11px;margin-top:10px}
+    .ack{margin-top:14px;border:1px solid #c9d6e6;background:#f4f8fc;border-radius:6px;padding:8px 10px;font-size:11.5px;line-height:1.45}
     .foot{margin-top:14px;text-align:center;font-size:12px;font-weight:700;color:#5c2530}
     [contenteditable]:focus{outline:none} .page [contenteditable="true"]:hover{background:#fffde8}
     @media print{ .noprint{display:none} .page{padding:.35in .4in} tr{break-inside:avoid} }
@@ -3148,8 +3149,9 @@ function floorStockFormDoc(org, units, rx, rows){
       <div style="padding-left:20px">NPI / DEA: <span class="ln"></span></div>
     </div>
     <h2>3. Medications — enter the number of packages</h2>
-    <table><thead><tr><th>#</th><th>Medication</th><th>Package</th><th>NDC</th><th>No. of packages</th></tr></thead><tbody>${medRows}</tbody></table>
+    <table><thead><tr><th>#</th><th>Medication</th><th>Package</th><th>No. of packages</th></tr></thead><tbody>${medRows}</tbody></table>
     <div class="note">Quantity is the <b>number of packages</b> (see the Package column). Leave blank any medication you don’t need.${hasC2?' <b>Schedule II (C-II) items require a completed DEA Form 222</b> — fax it with this form.':''}</div>
+    <div class="ack">I acknowledge that ordering and accepting possession of these medications may require additional administrative and/or clinical review and documentation that I assume responsibility for.</div>
     <div class="sig"><div><div class="ln"></div>Purchaser signature</div><div><div class="ln"></div>Printed name</div><div style="flex:.55"><div class="ln"></div>Date</div></div>
     <div class="foot">➤ Sign, date, and fax this form to OnePoint Patient Care: 877-791-6774</div>
   </div></body></html>`;
