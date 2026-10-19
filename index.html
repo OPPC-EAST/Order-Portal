@@ -3036,6 +3036,7 @@ async function floorStockModal(){
       ${medsDl}
       <div style="display:${locked?'none':'flex'};gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
         <button class="btn-ghost btn-sm" id="fsAddBlank">＋ Add item</button>
+        <button class="btn-ghost btn-sm" id="fsSortAZ" title="Put the list in alphabetical order">⇅ Sort A–Z</button>
         <input id="fsAdd" list="fsMedDl" placeholder="…or add straight from the master list" style="flex:1;min-width:240px">
         <button class="btn-ghost btn-sm" id="fsAddBtn">＋ Add from master list</button>
         ${canDefault&&items.length?'<button class="btn-ghost btn-sm" id="fsDefaults" title="Replace this list with the default Reserve Care list">↺ Reset to default list</button>':''}
@@ -3074,6 +3075,9 @@ async function floorStockModal(){
     body.querySelectorAll('[data-fsunlink]').forEach(x=>x.onclick=()=>{ items[+x.dataset.fsunlink].medication_id=null; dirty=true; draw(); });
     body.querySelectorAll('[data-fsmv]').forEach(x=>x.onclick=()=>{ const i=+x.dataset.i, j=i+(+x.dataset.fsmv); const t=items[i]; items[i]=items[j]; items[j]=t; dirty=true; draw(); });
     body.querySelectorAll('[data-fsrm]').forEach(x=>x.onclick=()=>{ items.splice(+x.dataset.fsrm,1); dirty=true; draw(); });
+    body.querySelector('#fsSortAZ').onclick=()=>{
+      items.sort((a,b)=>String(a.description||'').localeCompare(String(b.description||''),undefined,{sensitivity:'base',numeric:true}));
+      dirty=true; draw(); toast('Sorted A–Z — click Save list to keep this order.'); };
     body.querySelector('#fsAddBlank').onclick=()=>{ items.push({ medication_id:null, description:'', package:'', ndc:'', pkgs:'' }); dirty=true; draw();
       const inps=body.querySelectorAll('[data-fsf="description"]'); if(inps.length) inps[inps.length-1].focus(); };
     const add=()=>{ const v=body.querySelector('#fsAdd').value.trim(); if(!v) return;
