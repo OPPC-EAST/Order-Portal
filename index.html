@@ -3138,10 +3138,14 @@ function floorStockFormDoc(org, units, rx, rows){
     [contenteditable]:focus{outline:none} .page [contenteditable="true"]:hover{background:#fffde8}
     h2{break-after:avoid;page-break-after:avoid}
     @page{size:letter;margin:.3in}
-    @media print{ html,body{width:auto} .noprint{display:none !important} .page{padding:0 3px;max-width:none;width:auto} tr{break-inside:avoid}
-      body{font-size:11px} h2{margin:8px 0 4px;font-size:11.5px} .hd{margin-bottom:5px;padding-bottom:6px} .hd img{max-height:44px}
-      table.loc td{padding:3px 8px} table.loc .s{margin-top:0} table.meds td{padding:2px 8px;height:18px} th{padding:4px 6px}
-      .pick{gap:5px 28px;font-size:11.5px} .pick div{min-height:17px} .note{margin-top:5px;padding:4px 9px} .ack{margin-top:6px;padding:5px 10px;font-size:11px} .sig{margin-top:14px} .sig .ln{height:22px} .foot{margin-top:6px;font-size:11.5px} table.meds tbody tr:nth-child(even) td{-webkit-print-color-adjust:exact;print-color-adjust:exact} th{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
+    /* Compact print layout (applied while printing, and while measuring to fit one page) */
+    body.pfit{font-size:11px} body.pfit .page{width:7.9in;max-width:none;padding:0 3px;margin:0}
+    body.pfit h2{margin:7px 0 3px;font-size:11px} body.pfit .hd{margin-bottom:5px;padding-bottom:5px} body.pfit .hd img{max-height:40px}
+    body.pfit table.loc td{padding:3px 8px} body.pfit table.loc .s{margin-top:0} body.pfit table.meds td{padding:2px 8px;height:17px} body.pfit th{padding:3px 6px}
+    body.pfit .pick{gap:4px 28px;font-size:11px} body.pfit .pick div{min-height:16px} body.pfit .note{margin-top:4px;padding:3px 9px}
+    body.pfit .ack{margin-top:5px;padding:4px 10px;font-size:10.5px} body.pfit .sig{margin-top:12px} body.pfit .sig .ln{height:20px} body.pfit .foot{margin-top:5px;font-size:11px}
+    @media print{ html,body{width:auto} .noprint{display:none !important} tr{break-inside:avoid}
+      table.meds tbody tr:nth-child(even) td{-webkit-print-color-adjust:exact;print-color-adjust:exact} th{-webkit-print-color-adjust:exact;print-color-adjust:exact} }
   </style></head><body><div class="page" contenteditable="true" spellcheck="false">
     <div class="noprint" contenteditable="false" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:8px 10px;background:#eef6ff;border:1px solid #cfe0f2;border-radius:6px;font-size:12px">
       <span style="flex:1">✎ <b>Everything on this form is editable</b> — click any text to change it, or select a row and delete it. Changes apply to this printout only; edit the saved list in the portal to keep them.</span>
@@ -3164,7 +3168,21 @@ function floorStockFormDoc(org, units, rx, rows){
     <div class="close"><div class="ack">I acknowledge that ordering and accepting possession of these medications may require additional administrative and/or clinical review and documentation that I assume responsibility for.</div>
     <div class="sig"><div><div class="ln"></div>Purchaser signature</div><div><div class="ln"></div>Printed name</div><div style="flex:.5"><div class="ln"></div>Date</div></div>
     <div class="foot">➤ Sign, date, and fax this form to OnePoint Patient Care: 877-791-6774</div></div>
-  </div></body></html>`;
+  </div>
+  <script>
+  // Always print on ONE letter page: use the compact layout, then scale the page down if it is still too tall.
+  (function(){
+    var PH=10.1*96;                                   // printable height (11in − 0.3in margins, with a little room for browser headers)
+    function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom='';
+      var bar=document.querySelector('.noprint'), bd=bar?bar.style.display:''; if(bar) bar.style.display='none';
+      var h=pg.scrollHeight; if(bar) bar.style.display=bd;
+      if(h>PH) pg.style.zoom=(Math.floor(PH/h*1000)/1000*0.985).toFixed(3); }
+    function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; }
+    window.addEventListener('beforeprint', fit); window.addEventListener('afterprint', unfit);
+    if(window.matchMedia){ var mq=window.matchMedia('print'); if(mq.addEventListener) mq.addEventListener('change',function(e){ if(e.matches) fit(); else unfit(); }); }
+    window.__fitPrint=fit;
+  })();
+  <\/script></body></html>`;
 }
 async function pharmacyReorder(orderId){
   const { data:o, error } = await db.from('orders').select('*, care_centers(*), order_lines(*, medications(name,strength))').eq('id',orderId).maybeSingle();
