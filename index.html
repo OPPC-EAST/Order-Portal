@@ -2914,6 +2914,32 @@ let PHARM_REORDER_FROM=null;
 // Stored in floor_stock_items (60b_floor_stock.sql). Used to (1) print a fax-back order form listing
 // every location and (2) start a pharmacy-generated order where quantity = number of packages.
 let FLOOR_NDC={};
+// Reserve Care default floor stock list (from the wholesaler favorites list) — editable after loading.
+const FLOOR_DEFAULTS_RESERVE=[
+ ['Acetaminophen 325 mg Tab','50 tablets','00536-1327-06'],
+ ['Acetaminophen Cherry 160 mg/5 mL Solution','473 mL bottle','00904-7014-16'],
+ ['Antacid Regular Strength Liquid','355 mL bottle','00536-1293-83'],
+ ['Aspirin 81 mg Chewable Tab','36 tablets','00536-1008-36'],
+ ['Biotene Dry Mouth Oral Rinse Fresh Mint','16 oz bottle','48582-0003-30'],
+ ['Bisacodyl 10 mg Suppositories UD (Perrigo)','12 suppositories','00574-7050-12'],
+ ['Diphenhydramine HCl 25 mg Capsule','100 capsules','69618-0024-01'],
+ ['Docusate Sodium 100 mg Tab','100 tablets','00904-6750-60'],
+ ['Fleet Glycerin Suppositories Laxative','24 suppositories','00132-0075-24'],
+ ['Geri-Tussin S/F A/F Solution Cherry','16 oz bottle','57896-0693-16'],
+ ['Good Neighbor Pharmacy Magnesium Citrate Laxative','12 × 10 oz bottles','46122-0740-38'],
+ ['Guaifenesin-DM 10-100 mg Cherry Syrup','473 mL bottle','00536-1313-85'],
+ ['Ibuprofen 200 mg Tab','100 tablets','00904-6747-59'],
+ ['Insta-Glucose Gel','1.09 oz tube','24208-0024-02'],
+ ['Melatonin 3 mg Tab','60 tablets','80681-0085-00'],
+ ['Major Milk of Magnesia Saline Laxative Original Flavor','473 mL bottle','00904-0788-16'],
+ ['Nystatin 100,000 units/mL Suspension','473 mL bottle','69315-0504-47'],
+ ['Polyethylene Glycol 3350 Powder UD (Perrigo)','14 packets','45802-0868-66'],
+ ['Refresh Classic Lubricant Eye Drops Single-Use Containers','30 × 0.01 oz','00023-0506-01'],
+ ['Senna Laxative 8.6 mg Tab','100 tablets','71399-1017-01'],
+ ['Simethicone 80 mg Chewable Tab','100 tablets','00904-7206-60'],
+ ['Sodium Chloride 0.9% Irrigation Bag','4 × 3000 mL bags','00338-0047-47'],
+ ['Sodium Chloride 0.9% Inhalation Vial UD','100 × 3 mL vials','76204-0300-03'],
+ ['Sorbitol 70% Solution (Carolina)','16 oz bottle','46287-0500-01']];
 async function floorStockModal(){
   await loadMeds();
   const { data:orgs, error:oe }=await db.from('organizations').select('id,name,logo_url').order('name');
@@ -2922,81 +2948,111 @@ async function floorStockModal(){
   let org=list.find(o=>/reserve/i.test(o.name||''))||list[0];
   let items=[], units=[], dirty=false, tableMissing=false;
   const medLabel=m=>[m.name,m.strength,m.form].filter(Boolean).join(' ');
+  const medById=id=>MEDS.find(x=>x.id===id)||null;
   const ov=modal(`<h3 style="margin:0 0 4px">🧺 Floor stock</h3>
-    <div class="muted" style="font-size:12.5px;margin-bottom:10px">Set the floor stock list and default NDCs for an organization, print the fax-back order form for its locations, or start a floor stock order (quantity = number of packages).</div>
+    <div class="muted" style="font-size:12.5px;margin-bottom:10px">Every field is editable. Set the list and default NDCs, print the fax-back form, or start a floor stock order (quantity = number of packages). To order an item it must be linked to the master list.</div>
     <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
       <label style="font-size:12.5px;font-weight:600">Organization</label>
       <select id="fsOrg" style="min-width:240px">${list.map(o=>`<option value="${esc(o.id)}"${o.id===org.id?' selected':''}>${esc(o.name)}</option>`).join('')}</select>
       <span class="spacer" style="flex:1"></span>
       <button class="btn-ghost btn-sm" id="fsPrint">🖨 Print fax form</button>
     </div>
-    <div id="fsBody"><div class="empty">Loading…</div></div>`, 980);
+    <div id="fsBody"><div class="empty">Loading…</div></div>`, 1180);
+  { const card=ov.querySelector('.modal-card'); if(card) card.style.width='min(1180px,96vw)'; }
   const body=ov.querySelector('#fsBody');
   const medsDl=`<datalist id="fsMedDl">${MEDS.map(m=>`<option value="${esc(medLabel(m))}">`).join('')}</datalist>`;
+  // Best-effort link of a free-text item to the master list (exact NDC on file, else exact name).
+  function autoLink(r, ndcIndex){
+    const d=String(r.ndc||'').replace(/\D/g,''); if(d && ndcIndex[d]) return ndcIndex[d];
+    const n=String(r.description||'').trim().toLowerCase(); const m=n&&MEDS.find(x=>medLabel(x).toLowerCase()===n); return m?m.id:null;
+  }
+  async function ndcIndexFor(){
+    const idx={}; try{ const { data }=await db.from('ndc_inventory').select('medication_id,ndcs').in('care_center_id',units.map(c=>c.id));
+      (data||[]).forEach(r=>{ const a=Array.isArray(r.ndcs)?r.ndcs:String(r.ndcs||'').replace(/[{}\[\]"]/g,'').split(','); a.forEach(x=>{ const d=String(x||'').replace(/\D/g,''); if(d && !idx[d]) idx[d]=String(r.medication_id); }); }); }catch(e){}
+    return idx; }
   async function load(){
     body.innerHTML='<div class="empty">Loading…</div>'; dirty=false;
     const [{ data:it, error:ie },{ data:cc }]=await Promise.all([
       db.from('floor_stock_items').select('*').eq('org_id',org.id).order('sort_no'),
       db.from('care_centers').select('*').eq('org_id',org.id).order('name')]);
     tableMissing=!!ie;
-    items=(it||[]).map(r=>({ medication_id:String(r.medication_id), ndc:r.ndc||'', pkgs:'' })).filter(r=>MEDS.some(m=>m.id===r.medication_id));
     units=(cc||[]).filter(c=>c.active!==false);
+    items=(it||[]).map(r=>{ const m=r.medication_id?medById(String(r.medication_id)):null;
+      return { medication_id:m?m.id:null, description:r.description||(m?medLabel(m):''), package:r.package||(m?packShort(m):''), ndc:r.ndc||'', pkgs:'' }; });
     draw();
   }
   function draw(){
     const unitOpts=units.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
-    body.innerHTML=`${tableMissing?'<div class="note" style="font-size:12.5px;margin-bottom:8px">Run <b>60b_floor_stock.sql</b> in Supabase to save floor stock lists. Until then you can still build a list here for printing or ordering, but it won’t be saved.</div>':''}
-      <div style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;max-height:46vh">
-      <table class="lines" style="margin:0"><thead><tr><th style="width:34px">#</th><th>Medication</th><th>Package</th><th style="width:170px">Default NDC</th><th style="width:96px;text-align:right">Packages</th><th style="width:96px"></th></tr></thead><tbody>
-      ${items.length?items.map((r,i)=>{ const m=MEDS.find(x=>x.id===r.medication_id)||{}; return `<tr>
+    const canDefault=/reserve/i.test(org.name||'');
+    body.innerHTML=`${tableMissing?'<div class="note" style="font-size:12.5px;margin-bottom:8px">Run <b>60b_floor_stock.sql</b> in Supabase to save floor stock lists. Until then you can still edit a list here to print or order, but it won’t be saved.</div>':''}
+      <div style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;max-height:50vh">
+      <table class="lines" style="margin:0"><thead><tr><th style="width:30px">#</th><th>Description</th><th style="width:150px">Package</th><th style="width:140px">Default NDC</th><th style="width:220px">Master list link</th><th style="width:80px;text-align:right">Pkgs</th><th style="width:94px"></th></tr></thead><tbody>
+      ${items.length?items.map((r,i)=>{ const m=r.medication_id?medById(r.medication_id):null; return `<tr>
         <td class="muted">${i+1}</td>
-        <td><b>${esc(m.name||'')}</b> <span class="muted">${esc(m.strength||'')}</span> ${esc(m.form||'')} ${schBadge(m.schedule)}</td>
-        <td class="muted" style="font-size:12px">${esc(packShort(m))}</td>
-        <td><input data-fsndc="${i}" value="${esc(r.ndc)}" placeholder="NDC" style="width:150px;font-family:ui-monospace,monospace"></td>
-        <td style="text-align:right"><input data-fspk="${i}" type="number" min="0" step="1" value="${esc(r.pkgs)}" placeholder="0" style="width:70px;text-align:right"></td>
-        <td style="white-space:nowrap"><button class="btn-ghost btn-sm" data-fsmv="-1" data-i="${i}" ${i===0?'disabled':''} style="padding:2px 7px">▲</button><button class="btn-ghost btn-sm" data-fsmv="1" data-i="${i}" ${i===items.length-1?'disabled':''} style="padding:2px 7px">▼</button><button class="btn-ghost btn-sm" data-fsrm="${i}" style="padding:2px 7px;color:#c0392b">✕</button></td></tr>`; }).join('')
-        :'<tr><td colspan="6"><div class="empty" style="padding:22px">No medications on this floor stock list yet — add them below.</div></td></tr>'}
+        <td><input data-fsf="description" data-i="${i}" value="${esc(r.description)}" placeholder="Medication description" style="width:100%;min-width:220px"></td>
+        <td><input data-fsf="package" data-i="${i}" value="${esc(r.package)}" placeholder="e.g. 100 tablets" style="width:100%"></td>
+        <td><input data-fsf="ndc" data-i="${i}" value="${esc(r.ndc)}" placeholder="NDC" style="width:100%;font-family:ui-monospace,monospace"></td>
+        <td>${m?`<div style="font-size:12px;line-height:1.3"><b>${esc(medLabel(m))}</b> ${schBadge(m.schedule)}<br><button type="button" data-fsunlink="${i}" style="border:none;background:none;padding:0;color:var(--brand);font-size:11px;font-weight:700;cursor:pointer">change link</button></div>`
+             :`<input data-fslink="${i}" list="fsMedDl" placeholder="Link to master list…" style="width:100%;border-color:#f0d3b0">`}</td>
+        <td style="text-align:right"><input data-fsf="pkgs" data-i="${i}" type="number" min="0" step="1" value="${esc(r.pkgs)}" placeholder="0" style="width:62px;text-align:right"></td>
+        <td style="white-space:nowrap"><button class="btn-ghost btn-sm" data-fsmv="-1" data-i="${i}" ${i===0?'disabled':''} style="padding:2px 6px">▲</button><button class="btn-ghost btn-sm" data-fsmv="1" data-i="${i}" ${i===items.length-1?'disabled':''} style="padding:2px 6px">▼</button><button class="btn-ghost btn-sm" data-fsrm="${i}" style="padding:2px 6px;color:#c0392b" title="Remove">✕</button></td></tr>`; }).join('')
+        :`<tr><td colspan="7"><div class="empty" style="padding:22px">No items on this floor stock list yet.${canDefault?' <button class="btn-primary btn-sm" id="fsDefaults" style="margin-left:8px">Load Reserve Care default list ('+FLOOR_DEFAULTS_RESERVE.length+' items)</button>':''}</div></td></tr>`}
       </tbody></table></div>
+      ${medsDl}
       <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
-        <input id="fsAdd" list="fsMedDl" placeholder="Add a medication from the master list…" style="flex:1;min-width:260px">${medsDl}
-        <button class="btn-ghost btn-sm" id="fsAddBtn">＋ Add</button>
+        <button class="btn-ghost btn-sm" id="fsAddBlank">＋ Add item</button>
+        <input id="fsAdd" list="fsMedDl" placeholder="…or add straight from the master list" style="flex:1;min-width:240px">
+        <button class="btn-ghost btn-sm" id="fsAddBtn">＋ Add from master list</button>
+        ${canDefault&&items.length?'<button class="btn-ghost btn-sm" id="fsDefaults" title="Replace this list with the default Reserve Care list">↺ Reset to default list</button>':''}
         <button class="btn-primary btn-sm" id="fsSave"${tableMissing?' disabled title="Run 60b_floor_stock.sql first"':''}>💾 Save list${dirty?' *':''}</button>
       </div>
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e3e8ee;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <b style="font-size:13px">Create floor stock order</b>
         <select id="fsUnit" style="min-width:260px">${unitOpts||'<option value="">No locations</option>'}</select>
-        <span class="muted" style="font-size:12px;flex:1;min-width:180px">Enter the number of packages above (from the faxed form), then create the order.</span>
+        <span class="muted" style="font-size:12px;flex:1;min-width:180px">Enter the number of packages (Pkgs) from the faxed form, then create the order.</span>
         <button class="btn-primary btn-sm" id="fsOrder">Create order →</button>
       </div>`;
-    body.querySelectorAll('[data-fsndc]').forEach(x=>x.oninput=()=>{ items[+x.dataset.fsndc].ndc=x.value.trim(); dirty=true; markDirty(); });
-    body.querySelectorAll('[data-fspk]').forEach(x=>x.oninput=()=>{ items[+x.dataset.fspk].pkgs=x.value; });
+    const mark=()=>{ dirty=true; const b=body.querySelector('#fsSave'); if(b && !/\*$/.test(b.textContent)) b.textContent='💾 Save list *'; };
+    body.querySelectorAll('[data-fsf]').forEach(x=>x.oninput=()=>{ const f=x.dataset.fsf; items[+x.dataset.i][f]=f==='pkgs'?x.value:x.value; if(f!=='pkgs') mark(); });
+    body.querySelectorAll('[data-fslink]').forEach(x=>x.onchange=()=>{ const v=x.value.trim().toLowerCase(); const m=MEDS.find(mm=>medLabel(mm).toLowerCase()===v);
+      if(!m){ if(v) toast('Pick a medication from the list.', true); return; } items[+x.dataset.fslink].medication_id=m.id; dirty=true; draw(); });
+    body.querySelectorAll('[data-fsunlink]').forEach(x=>x.onclick=()=>{ items[+x.dataset.fsunlink].medication_id=null; dirty=true; draw(); });
     body.querySelectorAll('[data-fsmv]').forEach(x=>x.onclick=()=>{ const i=+x.dataset.i, j=i+(+x.dataset.fsmv); const t=items[i]; items[i]=items[j]; items[j]=t; dirty=true; draw(); });
     body.querySelectorAll('[data-fsrm]').forEach(x=>x.onclick=()=>{ items.splice(+x.dataset.fsrm,1); dirty=true; draw(); });
+    body.querySelector('#fsAddBlank').onclick=()=>{ items.push({ medication_id:null, description:'', package:'', ndc:'', pkgs:'' }); dirty=true; draw();
+      const inps=body.querySelectorAll('[data-fsf="description"]'); if(inps.length) inps[inps.length-1].focus(); };
     const add=()=>{ const v=body.querySelector('#fsAdd').value.trim(); if(!v) return;
       const m=MEDS.find(x=>medLabel(x).toLowerCase()===v.toLowerCase()); if(!m) return toast('Pick a medication from the list.', true);
-      if(items.some(r=>r.medication_id===m.id)) return toast('That medication is already on the list.', true);
-      items.push({ medication_id:m.id, ndc:'', pkgs:'' }); dirty=true; draw(); setTimeout(()=>{ const a=body.querySelector('#fsAdd'); if(a) a.focus(); },20); };
+      items.push({ medication_id:m.id, description:medLabel(m), package:packShort(m), ndc:'', pkgs:'' }); dirty=true; draw(); };
     body.querySelector('#fsAddBtn').onclick=add;
     body.querySelector('#fsAdd').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); add(); } });
+    const df=body.querySelector('#fsDefaults'); if(df) df.onclick=async()=>{
+      if(items.length && !await uiConfirm('Replace the current list with the '+FLOOR_DEFAULTS_RESERVE.length+'-item Reserve Care default list?',{title:'Reset list',okText:'Replace',danger:true})) return;
+      const idx=await ndcIndexFor();
+      items=FLOOR_DEFAULTS_RESERVE.map(([d,p,n])=>{ const r={ medication_id:null, description:d, package:p, ndc:n, pkgs:'' }; r.medication_id=autoLink(r, idx); return r; });
+      dirty=true; draw(); toast('Default list loaded — edit anything, then Save list.'); };
     body.querySelector('#fsSave').onclick=save;
     body.querySelector('#fsOrder').onclick=startOrder;
   }
-  function markDirty(){ const b=body.querySelector('#fsSave'); if(b && !/\*$/.test(b.textContent)) b.textContent='💾 Save list *'; }
   async function save(){
+    const rows=items.filter(r=>String(r.description||'').trim()||r.medication_id);
     const { error:de }=await db.from('floor_stock_items').delete().eq('org_id',org.id);
     if(de) return toast('Could not save: '+de.message, true);
-    if(items.length){ const { error:ie }=await db.from('floor_stock_items').insert(items.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id, ndc:r.ndc||null, sort_no:i+1 })));
-      if(ie) return toast('Could not save: '+ie.message, true); }
-    dirty=false; toast('Floor stock list saved for '+org.name+'.'); draw();
+    if(rows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').trim()||null, sort_no:i+1 })));
+      if(ie) return toast('Could not save: '+ie.message+(/description|package|null value/i.test(ie.message)?' — run the updated 60b_floor_stock.sql.':''), true); }
+    items=rows; dirty=false; toast('Floor stock list saved for '+org.name+'.'); draw();
   }
   async function startOrder(){
     const ccId=body.querySelector('#fsUnit').value; const cc=units.find(c=>c.id===ccId);
     if(!cc) return toast('Choose the location the order ships to.', true);
     const picked=items.filter(r=>(parseInt(r.pkgs)||0)>0);
-    if(!picked.length) return toast('Enter the number of packages for at least one medication.', true);
+    if(!picked.length) return toast('Enter the number of packages for at least one item.', true);
+    const unlinked=picked.filter(r=>!r.medication_id);
+    if(unlinked.length) return uiAlert('Link items to the master list','These items have packages entered but aren’t linked to a master-list medication, so they can’t be ordered yet:<ul style="margin:6px 0 0 18px">'+unlinked.map(r=>'<li>'+esc(r.description||'(no description)')+'</li>').join('')+'</ul>Use the <b>Master list link</b> column (add the drug to the Master List first if it isn’t there).');
+    const dup=new Set(); for(const r of picked){ if(dup.has(r.medication_id)) return toast('The same master-list drug is linked twice — combine those rows first.', true); dup.add(r.medication_id); }
     if(dirty && !tableMissing && await uiConfirm('Save your changes to the floor stock list first?',{title:'Unsaved list',okText:'Save list'})) await save();
-    const lines=picked.map(r=>{ const m=MEDS.find(x=>x.id===r.medication_id)||{}; return { medication_id:r.medication_id, requested_qty:(parseInt(r.pkgs)||0)*pkgSize(m), approved_qty:null, medications:m }; });
-    const ndcs={}; picked.forEach(r=>{ if(r.ndc) ndcs[r.medication_id]=r.ndc.replace(/\s+/g,''); });
+    const lines=picked.map(r=>{ const m=medById(r.medication_id)||{}; return { medication_id:r.medication_id, requested_qty:(parseInt(r.pkgs)||0)*pkgSize(m), approved_qty:null, medications:m }; });
+    const ndcs={}; picked.forEach(r=>{ const d=String(r.ndc||'').replace(/\D/g,''); if(d) ndcs[r.medication_id]=d; });
     ov.remove();
     const { data:full }=await db.from('care_centers').select('*').eq('id',cc.id).maybeSingle();
     await renderStaff({shellOnly:true});
@@ -3009,23 +3065,24 @@ async function floorStockModal(){
     if(dirty && !await uiConfirm('Discard unsaved changes to this list?',{title:'Unsaved list',okText:'Discard',danger:true})){ e.target.value=org.id; return; }
     org=list.find(o=>o.id===e.target.value)||org; load(); };
   ov.querySelector('#fsPrint').onclick=async()=>{
-    if(!items.length) return toast('Add medications to the list first.', true);
+    const rows=items.filter(r=>String(r.description||'').trim());
+    if(!rows.length) return toast('Add items to the list first.', true);
     const ids=units.map(c=>c.id);
     const { data:rx }=ids.length?await db.from('prescribers').select('*').in('care_center_id',ids):{data:[]};
-    openDoc(floorStockFormDoc(org, units, rx||[], items.map(r=>({ m:MEDS.find(x=>x.id===r.medication_id)||{}, ndc:r.ndc }))));
+    openDoc(floorStockFormDoc(org, units, rx||[], rows.map(r=>({ description:r.description, package:r.package, ndc:r.ndc, c2:!!(r.medication_id && (medById(r.medication_id)||{}).schedule==='CII') }))));
   };
   load();
 }
 function floorStockFormDoc(org, units, rx, rows){
   const rxFor=id=>{ const l=rx.filter(r=>r.care_center_id===id); return l.find(r=>r.is_primary)||l[0]||null; };
   const rxName=r=>r?[r.first_name,r.last_name].filter(Boolean).join(' '):'';
-  const hasC2=rows.some(r=>r.m.schedule==='CII');
+  const hasC2=rows.some(r=>r.c2);
   const box='<span class="cb"></span>';
   const locRows=units.map(c=>{ const r=rxFor(c.id); return `<tr><td class="c">${box}</td>
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(c.phone):''}</div><div class="s">DEA ${esc(c.facility_dea||'—')} · Permit ${esc(c.permit||'—')}</div></td>
       <td>${esc(c.unit_mgr||'—')}</td><td>${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
-  const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.m.name||'')}</b> ${esc(r.m.strength||'')} ${esc(r.m.form||'')}${r.m.schedule==='CII'?' <span class="c2">C-II</span>':''}</td>
-      <td class="s2">${esc(packShort(r.m))}</td><td class="mono">${esc(r.ndc||'')}</td><td class="qty"></td></tr>`).join('');
+  const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
+      <td class="s2">${esc(r.package||'')}</td><td class="mono">${esc(r.ndc||'')}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
@@ -3044,9 +3101,12 @@ function floorStockFormDoc(org, units, rx, rows){
     .sig{display:flex;gap:26px;margin-top:22px;font-size:11px} .sig div{flex:1} .sig .ln{height:24px}
     .note{border:1px solid #f0d9a8;background:#fffaf0;border-radius:6px;padding:7px 9px;font-size:11px;margin-top:10px}
     .foot{margin-top:14px;text-align:center;font-size:12px;font-weight:700;color:#5c2530}
+    [contenteditable]:focus{outline:none} .page [contenteditable="true"]:hover{background:#fffde8}
     @media print{ .noprint{display:none} .page{padding:.35in .4in} tr{break-inside:avoid} }
-  </style></head><body><div class="page">
-    <div class="noprint" style="text-align:right;margin-bottom:8px"><button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
+  </style></head><body><div class="page" contenteditable="true" spellcheck="false">
+    <div class="noprint" contenteditable="false" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:8px 10px;background:#eef6ff;border:1px solid #cfe0f2;border-radius:6px;font-size:12px">
+      <span style="flex:1">✎ <b>Everything on this form is editable</b> — click any text to change it, or select a row and delete it. Changes apply to this printout only; edit the saved list in the portal to keep them.</span>
+      <button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
     <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b>877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
     <h2>1. Ship to — check one location</h2>
     <table><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary 222 purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
