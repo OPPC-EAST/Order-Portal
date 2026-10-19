@@ -2909,6 +2909,163 @@ async function reorderToCart(orderId){
 }
 // Pharmacy-Order Mode: rebuild a completed pharmacy-generated order as a new pharmacy order.
 let PHARM_REORDER_FROM=null;
+// ===================== Floor stock (per organization) =====================
+// A set list of medications with default NDCs that a facility orders for floor stock.
+// Stored in floor_stock_items (60b_floor_stock.sql). Used to (1) print a fax-back order form listing
+// every location and (2) start a pharmacy-generated order where quantity = number of packages.
+let FLOOR_NDC={};
+async function floorStockModal(){
+  await loadMeds();
+  const { data:orgs, error:oe }=await db.from('organizations').select('id,name,logo_url').order('name');
+  if(oe) return toast('Could not load organizations: '+oe.message, true);
+  const list=(orgs||[]); if(!list.length) return toast('No organizations found.', true);
+  let org=list.find(o=>/reserve/i.test(o.name||''))||list[0];
+  let items=[], units=[], dirty=false, tableMissing=false;
+  const medLabel=m=>[m.name,m.strength,m.form].filter(Boolean).join(' ');
+  const ov=modal(`<h3 style="margin:0 0 4px">🧺 Floor stock</h3>
+    <div class="muted" style="font-size:12.5px;margin-bottom:10px">Set the floor stock list and default NDCs for an organization, print the fax-back order form for its locations, or start a floor stock order (quantity = number of packages).</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+      <label style="font-size:12.5px;font-weight:600">Organization</label>
+      <select id="fsOrg" style="min-width:240px">${list.map(o=>`<option value="${esc(o.id)}"${o.id===org.id?' selected':''}>${esc(o.name)}</option>`).join('')}</select>
+      <span class="spacer" style="flex:1"></span>
+      <button class="btn-ghost btn-sm" id="fsPrint">🖨 Print fax form</button>
+    </div>
+    <div id="fsBody"><div class="empty">Loading…</div></div>`, 980);
+  const body=ov.querySelector('#fsBody');
+  const medsDl=`<datalist id="fsMedDl">${MEDS.map(m=>`<option value="${esc(medLabel(m))}">`).join('')}</datalist>`;
+  async function load(){
+    body.innerHTML='<div class="empty">Loading…</div>'; dirty=false;
+    const [{ data:it, error:ie },{ data:cc }]=await Promise.all([
+      db.from('floor_stock_items').select('*').eq('org_id',org.id).order('sort_no'),
+      db.from('care_centers').select('*').eq('org_id',org.id).order('name')]);
+    tableMissing=!!ie;
+    items=(it||[]).map(r=>({ medication_id:String(r.medication_id), ndc:r.ndc||'', pkgs:'' })).filter(r=>MEDS.some(m=>m.id===r.medication_id));
+    units=(cc||[]).filter(c=>c.active!==false);
+    draw();
+  }
+  function draw(){
+    const unitOpts=units.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join('');
+    body.innerHTML=`${tableMissing?'<div class="note" style="font-size:12.5px;margin-bottom:8px">Run <b>60b_floor_stock.sql</b> in Supabase to save floor stock lists. Until then you can still build a list here for printing or ordering, but it won’t be saved.</div>':''}
+      <div style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;max-height:46vh">
+      <table class="lines" style="margin:0"><thead><tr><th style="width:34px">#</th><th>Medication</th><th>Package</th><th style="width:170px">Default NDC</th><th style="width:96px;text-align:right">Packages</th><th style="width:96px"></th></tr></thead><tbody>
+      ${items.length?items.map((r,i)=>{ const m=MEDS.find(x=>x.id===r.medication_id)||{}; return `<tr>
+        <td class="muted">${i+1}</td>
+        <td><b>${esc(m.name||'')}</b> <span class="muted">${esc(m.strength||'')}</span> ${esc(m.form||'')} ${schBadge(m.schedule)}</td>
+        <td class="muted" style="font-size:12px">${esc(packShort(m))}</td>
+        <td><input data-fsndc="${i}" value="${esc(r.ndc)}" placeholder="NDC" style="width:150px;font-family:ui-monospace,monospace"></td>
+        <td style="text-align:right"><input data-fspk="${i}" type="number" min="0" step="1" value="${esc(r.pkgs)}" placeholder="0" style="width:70px;text-align:right"></td>
+        <td style="white-space:nowrap"><button class="btn-ghost btn-sm" data-fsmv="-1" data-i="${i}" ${i===0?'disabled':''} style="padding:2px 7px">▲</button><button class="btn-ghost btn-sm" data-fsmv="1" data-i="${i}" ${i===items.length-1?'disabled':''} style="padding:2px 7px">▼</button><button class="btn-ghost btn-sm" data-fsrm="${i}" style="padding:2px 7px;color:#c0392b">✕</button></td></tr>`; }).join('')
+        :'<tr><td colspan="6"><div class="empty" style="padding:22px">No medications on this floor stock list yet — add them below.</div></td></tr>'}
+      </tbody></table></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <input id="fsAdd" list="fsMedDl" placeholder="Add a medication from the master list…" style="flex:1;min-width:260px">${medsDl}
+        <button class="btn-ghost btn-sm" id="fsAddBtn">＋ Add</button>
+        <button class="btn-primary btn-sm" id="fsSave"${tableMissing?' disabled title="Run 60b_floor_stock.sql first"':''}>💾 Save list${dirty?' *':''}</button>
+      </div>
+      <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e3e8ee;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <b style="font-size:13px">Create floor stock order</b>
+        <select id="fsUnit" style="min-width:260px">${unitOpts||'<option value="">No locations</option>'}</select>
+        <span class="muted" style="font-size:12px;flex:1;min-width:180px">Enter the number of packages above (from the faxed form), then create the order.</span>
+        <button class="btn-primary btn-sm" id="fsOrder">Create order →</button>
+      </div>`;
+    body.querySelectorAll('[data-fsndc]').forEach(x=>x.oninput=()=>{ items[+x.dataset.fsndc].ndc=x.value.trim(); dirty=true; markDirty(); });
+    body.querySelectorAll('[data-fspk]').forEach(x=>x.oninput=()=>{ items[+x.dataset.fspk].pkgs=x.value; });
+    body.querySelectorAll('[data-fsmv]').forEach(x=>x.onclick=()=>{ const i=+x.dataset.i, j=i+(+x.dataset.fsmv); const t=items[i]; items[i]=items[j]; items[j]=t; dirty=true; draw(); });
+    body.querySelectorAll('[data-fsrm]').forEach(x=>x.onclick=()=>{ items.splice(+x.dataset.fsrm,1); dirty=true; draw(); });
+    const add=()=>{ const v=body.querySelector('#fsAdd').value.trim(); if(!v) return;
+      const m=MEDS.find(x=>medLabel(x).toLowerCase()===v.toLowerCase()); if(!m) return toast('Pick a medication from the list.', true);
+      if(items.some(r=>r.medication_id===m.id)) return toast('That medication is already on the list.', true);
+      items.push({ medication_id:m.id, ndc:'', pkgs:'' }); dirty=true; draw(); setTimeout(()=>{ const a=body.querySelector('#fsAdd'); if(a) a.focus(); },20); };
+    body.querySelector('#fsAddBtn').onclick=add;
+    body.querySelector('#fsAdd').addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); add(); } });
+    body.querySelector('#fsSave').onclick=save;
+    body.querySelector('#fsOrder').onclick=startOrder;
+  }
+  function markDirty(){ const b=body.querySelector('#fsSave'); if(b && !/\*$/.test(b.textContent)) b.textContent='💾 Save list *'; }
+  async function save(){
+    const { error:de }=await db.from('floor_stock_items').delete().eq('org_id',org.id);
+    if(de) return toast('Could not save: '+de.message, true);
+    if(items.length){ const { error:ie }=await db.from('floor_stock_items').insert(items.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id, ndc:r.ndc||null, sort_no:i+1 })));
+      if(ie) return toast('Could not save: '+ie.message, true); }
+    dirty=false; toast('Floor stock list saved for '+org.name+'.'); draw();
+  }
+  async function startOrder(){
+    const ccId=body.querySelector('#fsUnit').value; const cc=units.find(c=>c.id===ccId);
+    if(!cc) return toast('Choose the location the order ships to.', true);
+    const picked=items.filter(r=>(parseInt(r.pkgs)||0)>0);
+    if(!picked.length) return toast('Enter the number of packages for at least one medication.', true);
+    if(dirty && !tableMissing && await uiConfirm('Save your changes to the floor stock list first?',{title:'Unsaved list',okText:'Save list'})) await save();
+    const lines=picked.map(r=>{ const m=MEDS.find(x=>x.id===r.medication_id)||{}; return { medication_id:r.medication_id, requested_qty:(parseInt(r.pkgs)||0)*pkgSize(m), approved_qty:null, medications:m }; });
+    const ndcs={}; picked.forEach(r=>{ if(r.ndc) ndcs[r.medication_id]=r.ndc.replace(/\s+/g,''); });
+    ov.remove();
+    const { data:full }=await db.from('care_centers').select('*').eq('id',cc.id).maybeSingle();
+    await renderStaff({shellOnly:true});
+    PHARM_REORDER_FROM=null;
+    await pharmacyBuildScreen(full||cc, { order_lines:lines, purchaser_name:(full||cc).unit_mgr||'', purchaser_email:(full||cc).unit_mgr_email||'' });
+    FLOOR_NDC=ndcs;
+    toast('Floor stock order started for '+cc.name+' — review the cart, then create the order. Default NDCs are applied when it’s created.');
+  }
+  ov.querySelector('#fsOrg').onchange=async e=>{
+    if(dirty && !await uiConfirm('Discard unsaved changes to this list?',{title:'Unsaved list',okText:'Discard',danger:true})){ e.target.value=org.id; return; }
+    org=list.find(o=>o.id===e.target.value)||org; load(); };
+  ov.querySelector('#fsPrint').onclick=async()=>{
+    if(!items.length) return toast('Add medications to the list first.', true);
+    const ids=units.map(c=>c.id);
+    const { data:rx }=ids.length?await db.from('prescribers').select('*').in('care_center_id',ids):{data:[]};
+    openDoc(floorStockFormDoc(org, units, rx||[], items.map(r=>({ m:MEDS.find(x=>x.id===r.medication_id)||{}, ndc:r.ndc }))));
+  };
+  load();
+}
+function floorStockFormDoc(org, units, rx, rows){
+  const rxFor=id=>{ const l=rx.filter(r=>r.care_center_id===id); return l.find(r=>r.is_primary)||l[0]||null; };
+  const rxName=r=>r?[r.first_name,r.last_name].filter(Boolean).join(' '):'';
+  const hasC2=rows.some(r=>r.m.schedule==='CII');
+  const box='<span class="cb"></span>';
+  const locRows=units.map(c=>{ const r=rxFor(c.id); return `<tr><td class="c">${box}</td>
+      <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(c.phone):''}</div><div class="s">DEA ${esc(c.facility_dea||'—')} · Permit ${esc(c.permit||'—')}</div></td>
+      <td>${esc(c.unit_mgr||'—')}</td><td>${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
+  const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.m.name||'')}</b> ${esc(r.m.strength||'')} ${esc(r.m.form||'')}${r.m.schedule==='CII'?' <span class="c2">C-II</span>':''}</td>
+      <td class="s2">${esc(packShort(r.m))}</td><td class="mono">${esc(r.ndc||'')}</td><td class="qty"></td></tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Floor Stock Order Form — ${esc(org.name)}</title><style>
+    *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
+    .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
+    .hd{display:flex;align-items:center;gap:16px;border-bottom:3px solid #c8102e;padding-bottom:10px;margin-bottom:12px}
+    .hd img{max-height:52px;max-width:200px;object-fit:contain}
+    .hd .t{flex:1;text-align:center} .hd h1{margin:0;font-size:18px;letter-spacing:.02em} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
+    h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px;color:#37506e}
+    table{width:100%;border-collapse:collapse} th,td{border:1px solid #b9c3cd;padding:5px 6px;vertical-align:top;text-align:left}
+    th{background:#eef2f6;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
+    td.c{text-align:center;width:30px} .s{font-size:10.5px;color:#4b5763;margin-top:1px} .s2{font-size:10.5px;color:#4b5763}
+    .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11px;white-space:nowrap} td.qty{width:90px}
+    .cb{display:inline-block;width:13px;height:13px;border:1.5px solid #16232e;border-radius:2px;vertical-align:middle}
+    .c2{font-size:9.5px;font-weight:800;color:#8b1a2b;border:1px solid #8b1a2b;border-radius:8px;padding:0 5px}
+    .pick{display:grid;grid-template-columns:1fr 1fr;gap:10px 22px;font-size:12px}
+    .pick div{display:flex;align-items:flex-end;gap:7px} .ln{flex:1;border-bottom:1px solid #16232e;min-width:120px;height:16px}
+    .sig{display:flex;gap:26px;margin-top:22px;font-size:11px} .sig div{flex:1} .sig .ln{height:24px}
+    .note{border:1px solid #f0d9a8;background:#fffaf0;border-radius:6px;padding:7px 9px;font-size:11px;margin-top:10px}
+    .foot{margin-top:14px;text-align:center;font-size:12px;font-weight:700;color:#5c2530}
+    @media print{ .noprint{display:none} .page{padding:.35in .4in} tr{break-inside:avoid} }
+  </style></head><body><div class="page">
+    <div class="noprint" style="text-align:right;margin-bottom:8px"><button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
+    <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b>877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
+    <h2>1. Ship to — check one location</h2>
+    <table><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary 222 purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
+    <h2>2. Purchaser &amp; prescriber — check one of each</h2>
+    <div class="pick">
+      <div>${box} Primary purchaser for the location checked above</div>
+      <div>${box} Primary prescriber for the location checked above</div>
+      <div>${box} Alternate purchaser: <span class="ln"></span></div>
+      <div>${box} Alternate prescriber: <span class="ln"></span></div>
+      <div></div>
+      <div style="padding-left:20px">NPI / DEA: <span class="ln"></span></div>
+    </div>
+    <h2>3. Medications — enter the number of packages</h2>
+    <table><thead><tr><th>#</th><th>Medication</th><th>Package</th><th>NDC</th><th>No. of packages</th></tr></thead><tbody>${medRows}</tbody></table>
+    <div class="note">Quantity is the <b>number of packages</b> (see the Package column). Leave blank any medication you don’t need.${hasC2?' <b>Schedule II (C-II) items require a completed DEA Form 222</b> — fax it with this form.':''}</div>
+    <div class="sig"><div><div class="ln"></div>Purchaser signature</div><div><div class="ln"></div>Printed name</div><div style="flex:.55"><div class="ln"></div>Date</div></div>
+    <div class="foot">➤ Sign, date, and fax this form to OnePoint Patient Care: 877-791-6774</div>
+  </div></body></html>`;
+}
 async function pharmacyReorder(orderId){
   const { data:o, error } = await db.from('orders').select('*, care_centers(*), order_lines(*, medications(name,strength))').eq('id',orderId).maybeSingle();
   if(error||!o){ toast('Could not open the order.', true); return; }
@@ -3245,7 +3402,7 @@ async function unlockAdminTabs(cb){
   else toast('Incorrect password.');
 }
 async function renderStaff(opts){
-  ACTIVE_ORDER=null; PHARM_BUILD=false; PHARM_EDIT_ORDER=null;
+  ACTIVE_ORDER=null; PHARM_BUILD=false; PHARM_EDIT_ORDER=null; FLOOR_NDC={};
   // gate protected tabs behind the password
   if(PROTECTED_TABS.includes(staffView) && !ADMIN_UNLOCKED){
     const wanted=staffView; staffView='queue';
@@ -3275,11 +3432,12 @@ async function renderStaff(opts){
 let QUEUE_ORDERS=null;     // cached queue fetch
 let QUEUE_TAB='pending';   // top-level: pending | completed | canceled
 async function renderQueue(host){
-  host.innerHTML='<div class="ml-sticky" id="qSticky"><div class="section-head" style="margin:0 0 10px"><h2 style="font-size:19px;margin:0">Order Queue</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="pharmNewOrder">＋ Create order for a facility</button></div><div id="qTabs"></div></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
+  host.innerHTML='<div class="ml-sticky" id="qSticky"><div class="section-head" style="margin:0 0 10px"><h2 style="font-size:19px;margin:0">Order Queue</h2><span class="spacer"></span><button class="btn-ghost btn-sm" id="pharmFloor" style="margin-right:8px" title="Floor stock lists, fax forms, and floor stock orders">🧺 Floor stock</button><button class="btn-primary btn-sm" id="pharmNewOrder">＋ Create order for a facility</button></div><div id="qTabs"></div></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
   // keep the Order Queue header + status tabs pinned right below the (already sticky) staff nav
   { const _nav=document.querySelector('.staffnav-sticky'), _qs=document.getElementById('qSticky');
     if(_qs){ const navTop=_nav?(parseInt(getComputedStyle(_nav).top)||66):66, navH=_nav?_nav.offsetHeight:54; _qs.style.top=(navTop+navH)+'px'; } }
   { const nb=$('#pharmNewOrder'); if(nb) nb.onclick=()=>pharmacyOrderModal(); }
+  { const fb=$('#pharmFloor'); if(fb) fb.onclick=()=>floorStockModal(); }
   const { data:orders, error } = await db.from('orders')
     .select('*, care_centers(name,color,short, org_id, ordering_mode, organizations(name,color)), order_lines(id)')
     .order('created_at',{ascending:false});
@@ -3530,8 +3688,9 @@ async function pharmacySubmitFromCart(){
     }).select().single());
     if(error) return toast('Error: '+error.message, true);
   }
-  const lines=ids.map(id=>({order_id:ord.id, medication_id:id, requested_qty:CART[id], approved_qty:CART[id]}));
+  const lines=ids.map(id=>Object.assign({order_id:ord.id, medication_id:id, requested_qty:CART[id], approved_qty:CART[id]}, FLOOR_NDC[id]?{ndc:FLOOR_NDC[id]}:{}));
   const { error:e2 }=await db.from('order_lines').insert(lines);
+  FLOOR_NDC={};
   if(e2) toast('Order created but lines failed: '+e2.message, true);
   await db.from('order_events').insert({order_id:ord.id, type:'submitted', actor_id:ME.userId, actor_name:ME.fullName, note:'Pharmacy-generated order from restock report — awaiting care center review & pharmacy receipt'});
   // Approval-alert email to the contact (item 2.4) — opens the pharmacy user's mail client.
