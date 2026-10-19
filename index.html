@@ -3097,6 +3097,8 @@ async function floorStockModal(){
   };
   load();
 }
+// 216.383.3764 / (216) 383-3764 / 2163833764 → 216-383-3764 (other formats are left as typed)
+function fmtPhoneDash(p){ const d=String(p||'').replace(/\D/g,''); const t=(d.length===11&&d[0]==='1')?d.slice(1):d; return t.length===10?t.slice(0,3)+'-'+t.slice(3,6)+'-'+t.slice(6):String(p||''); }
 // "Reserve Care Hospice - Ames Family House - Omnicell 1" and "… - Omnicell 2" are one ship-to location.
 function shipLocationName(n){ return String(n||'').replace(/\s*[-–—]\s*Omnicell\s*\d+\s*$/i,'').trim(); }
 function floorStockFormDoc(org, units, rx, rows){
@@ -3107,16 +3109,16 @@ function floorStockFormDoc(org, units, rx, rows){
   const hasC2=rows.some(r=>r.c2);
   const box='<span class="cb"></span>';
   const locRows=units.map(c=>{ const r=rxFor(c.id); return `<tr><td class="c">${box}</td>
-      <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(c.phone):''}</div><div class="s">DEA ${esc(c.facility_dea||'—')} · Permit ${esc(c.permit||'—')}</div></td>
+      <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(fmtPhoneDash(c.phone)):''}</div></td>
       <td>${esc(c.unit_mgr||'—')}</td><td>${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
   const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
       <td class="s2">${esc(r.package||'')}</td><td class="qty"></td></tr>`).join('');
-  return `<!doctype html><html><head><meta charset="utf-8"><title>Floor Stock Order Form — ${esc(org.name)}</title><style>
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Wholesale Purchasing - Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
     .hd{display:flex;align-items:center;gap:16px;border-bottom:3px solid #c8102e;padding-bottom:10px;margin-bottom:12px}
     .hd img{max-height:52px;max-width:200px;object-fit:contain}
-    .hd .t{flex:1;text-align:center} .hd h1{margin:0;font-size:18px;letter-spacing:.02em} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
+    .hd .t{flex:1;text-align:center} .hd h1{margin:0;font-size:15.5px;letter-spacing:.01em;white-space:nowrap} .hd .sub{font-size:11px;color:#55606b;margin-top:2px}
     h2{font-size:12px;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 6px;color:#37506e}
     table{width:100%;border-collapse:collapse} th,td{border:1px solid #b9c3cd;padding:5px 6px;vertical-align:top;text-align:left}
     th{background:#eef2f6;font-size:10.5px;text-transform:uppercase;letter-spacing:.03em}
@@ -3136,7 +3138,7 @@ function floorStockFormDoc(org, units, rx, rows){
     <div class="noprint" contenteditable="false" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:8px 10px;background:#eef6ff;border:1px solid #cfe0f2;border-radius:6px;font-size:12px">
       <span style="flex:1">✎ <b>Everything on this form is editable</b> — click any text to change it, or select a row and delete it. Changes apply to this printout only; edit the saved list in the portal to keep them.</span>
       <button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
-    <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b>877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
+    <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>WHOLESALE PURCHASING - FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b>877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
     <h2>1. Ship to — check one location</h2>
     <table><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary 222 purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
     <h2>2. Purchaser &amp; prescriber — check one of each</h2>
