@@ -3112,7 +3112,7 @@ function floorStockFormDoc(org, units, rx, rows){
       <td><b>${esc(c.name)}</b><div class="s">${esc(c.ship_to||'')}${c.phone?' · '+esc(fmtPhoneDash(c.phone)):''}</div></td>
       <td class="ctr">${esc(c.unit_mgr||'—')}</td><td class="ctr">${esc(rxName(r)||'—')}${r&&r.npi?'<div class="s">NPI '+esc(r.npi)+'</div>':''}</td></tr>`; }).join('');
   const medRows=rows.map((r,i)=>`<tr><td class="c">${i+1}</td><td class="ctr"><b>${esc(r.description||'')}</b>${r.c2?' <span class="c2">C-II</span>':''}</td>
-      <td class="s2 ctr" style="text-transform:uppercase">${esc(r.package||'')}</td><td class="qty"></td></tr>`).join('');
+      <td class="s2 ctr">${esc(String(r.package||'').toUpperCase())}</td><td class="qty"></td></tr>`).join('');
   return `<!doctype html><html><head><meta charset="utf-8"><title>Wholesale Purchasing - Floor Stock Order Form — ${esc(org.name)}</title><style>
     *{box-sizing:border-box} body{font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#16232e;margin:0;font-size:11.5px}
     .page{padding:.45in .5in;max-width:8.5in;margin:0 auto}
