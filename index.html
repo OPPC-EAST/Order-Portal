@@ -3020,6 +3020,7 @@ async function floorStockModal(){
         <input id="fsAdd" list="fsMedDl" placeholder="…or add straight from the master list" style="flex:1;min-width:240px">
         <button class="btn-ghost btn-sm" id="fsAddBtn">＋ Add from master list</button>
         ${canDefault&&items.length?'<button class="btn-ghost btn-sm" id="fsDefaults" title="Replace this list with the default Reserve Care list">↺ Reset to default list</button>':''}
+        ${items.some(r=>!r.medication_id&&String(r.description||'').trim())?`<button class="btn-ghost btn-sm" id="fsAddMaster" title="Create master-list drugs for items that aren’t linked yet">➕ Add unlinked to Master List (${items.filter(r=>!r.medication_id&&String(r.description||'').trim()).length})</button>`:''}
         <button class="btn-primary btn-sm" id="fsSave"${tableMissing?' disabled title="Run 60b_floor_stock.sql first"':''}>💾 Save list${dirty?' *':''}</button>
       </div>
       <div style="margin-top:16px;padding-top:12px;border-top:1px solid #e3e8ee;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
@@ -3057,6 +3058,7 @@ async function floorStockModal(){
       dirty=true; draw(); toast('Default list loaded — edit anything, then Save list.'); };
     body.querySelector('#fsSave').onclick=save;
     body.querySelector('#fsOrder').onclick=startOrder;
+    const am=body.querySelector('#fsAddMaster'); if(am) am.onclick=addUnlinkedToMaster;
   }
   async function save(){
     const rows=items.filter(r=>String(r.description||'').trim()||r.medication_id);
@@ -3065,6 +3067,70 @@ async function floorStockModal(){
     if(rows.length){ const { error:ie }=await db.from('floor_stock_items').insert(rows.map((r,i)=>({ org_id:org.id, medication_id:r.medication_id||null, description:String(r.description||'').trim()||null, package:String(r.package||'').trim()||null, ndc:String(r.ndc||'').replace(/\D/g,'')||null, sort_no:i+1 })));
       if(ie) return toast('Could not save: '+ie.message+(/description|package|null value/i.test(ie.message)?' — run the updated 60b_floor_stock.sql.':''), true); }
     items=rows; dirty=false; usingDefaults=false; toast('Floor stock list saved for '+org.name+'.'); draw();
+  }
+  // Create master-list drugs for unlinked floor stock items (reviewed + editable first), then link them.
+  async function addUnlinkedToMaster(){
+    const todo=items.map((r,i)=>({r,i})).filter(x=>!x.r.medication_id && String(x.r.description||'').trim());
+    if(!todo.length) return toast('Every item is already linked to the master list.');
+    const STR=/(\d[\d,.\/-]*\s*(?:mg|mcg|g|mL|ml|%|units?\/mL|units?|mun-?ml|meq)(?:\s*\/\s*\d*\.?\d*\s*(?:mL|ml|g))?)/i;
+    const FORMS=[[/chew/i,'Chewable Tab'],[/\btab/i,'Tablet'],[/caps?ule|\bcap\b/i,'Capsule'],[/suppositor/i,'Suppository'],[/syrup/i,'Syrup'],[/suspension|\bsus\b/i,'Suspension'],[/rinse/i,'Oral Rinse'],[/eye drop|drops/i,'Eye Drops'],[/gel/i,'Gel'],[/powder/i,'Powder'],[/irrig/i,'Irrigation Solution'],[/inhal/i,'Inhalation Solution'],[/liquid|\bliq\b/i,'Liquid'],[/solution|\bsol\b/i,'Solution'],[/laxative/i,'Liquid']];
+    const guess=r=>{ const d=String(r.description||'').trim(); const m=d.match(STR); let name=d, strength='', form='';
+      if(m){ name=d.slice(0,m.index).trim(); strength=m[1].replace(/\s+/g,' ').trim(); form=d.slice(m.index+m[0].length).trim(); }
+      const f=FORMS.find(([re])=>re.test(form||d)); if(f){ form=f[1]; if(!m) name=d; }
+      name=name.replace(/[,\-–]\s*$/,'').trim()||d;
+      const pk=String(r.package||''); const cnt=pk.match(/^\s*(\d+)\s*(?:×\s*)?(tablets?|capsules?|suppositor\w*|packets?|vials?|tubes?|bags?|containers?)\b/i);
+      const multi=pk.match(/^\s*(\d+)\s*[×x]\s*\d/i);              // "100 × 3 mL vials" → 100 per package
+      const size=multi?parseInt(multi[1],10):(cnt?parseInt(cnt[1],10):1);
+      return { name, strength, form, schedule:'RX', package_size:size, pack:pk.toUpperCase() }; };
+    const recs=todo.map(x=>({ ...guess(x.r), i:x.i, ndc:x.r.ndc||'' }));
+    const ok=await new Promise(res=>{
+      const mv=modal(`<h3 style="margin:0 0 4px">Add to Master List</h3>
+        <div class="muted" style="font-size:12.5px;margin-bottom:10px">Review each new drug — every field is editable. They’re created as active master-list drugs and linked to your floor stock list. Existing master-list drugs with the same name and strength are linked instead of duplicated.</div>
+        <div style="border:1px solid #d7dee7;border-radius:8px;overflow:auto;max-height:52vh"><table class="lines" style="margin:0"><thead><tr><th style="width:26px"><input type="checkbox" id="amAll" checked></th><th>Name</th><th style="width:110px">Strength</th><th style="width:130px">Form</th><th style="width:120px">Schedule</th><th style="width:70px">Pkg qty</th><th style="width:170px">Package description</th></tr></thead><tbody>
+        ${recs.map((x,k)=>`<tr><td><input type="checkbox" data-amon="${k}" checked></td>
+          <td><input data-am="name" data-k="${k}" value="${esc(x.name)}" style="width:100%"></td>
+          <td><input data-am="strength" data-k="${k}" value="${esc(x.strength)}" style="width:100%"></td>
+          <td><input data-am="form" data-k="${k}" value="${esc(x.form)}" style="width:100%"></td>
+          <td><select data-am="schedule" data-k="${k}" style="width:100%"><option value="RX" selected>Non-controlled</option><option value="CTRL">C-III–V</option><option value="CII">C-II</option></select></td>
+          <td><input data-am="package_size" data-k="${k}" type="number" min="1" value="${x.package_size}" style="width:100%"></td>
+          <td><input data-am="pack" data-k="${k}" value="${esc(x.pack)}" style="width:100%;text-transform:uppercase"></td></tr>`).join('')}
+        </tbody></table></div>
+        <div class="note" style="font-size:12px;margin-top:10px">New master-list drugs can be ordered by care centers that use the full master list. To limit one to specific locations, open it on the <b>Master List</b> and use its Care Center Formulary checkboxes.</div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;margin-top:8px"><input type="checkbox" id="amStock" checked> Also add each default NDC to the Care Center Formulary for all ${esc(org.name)} locations</label>
+        <div class="m-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px"><button class="btn-ghost" id="amCancel">Cancel</button><button class="btn-primary" id="amOk">Add to Master List</button></div>`, 1100);
+      { const card=mv.querySelector('.modal-card'); if(card) card.style.width='min(1100px,96vw)'; }
+      let done=false; const fin=v=>{ if(done) return; done=true; mv.remove(); res(v); };
+      mv.querySelectorAll('[data-am]').forEach(x=>x.oninput=x.onchange=()=>{ const k=+x.dataset.k, f=x.dataset.am; recs[k][f]= f==='package_size'?(parseInt(x.value,10)||1):x.value; });
+      mv.querySelector('#amAll').onchange=e=>mv.querySelectorAll('[data-amon]').forEach(c=>c.checked=e.target.checked);
+      mv.querySelector('#amCancel').onclick=()=>fin(null);
+      mv.querySelector('#amOk').onclick=()=>fin({ pick:[...mv.querySelectorAll('[data-amon]')].filter(c=>c.checked).map(c=>+c.dataset.amon), stock:mv.querySelector('#amStock').checked });
+      const mo=new MutationObserver(()=>{ if(!document.body.contains(mv)){ mo.disconnect(); fin(null); } }); mo.observe(document.body,{childList:true,subtree:true});
+    });
+    if(!ok || !ok.pick.length) return;
+    const norm=v=>String(v||'').trim().toLowerCase();
+    let made=0, linked=0; const errs=[];
+    for(const k of ok.pick){
+      const x=recs[k]; const name=String(x.name||'').trim(); if(!name){ errs.push('(blank name)'); continue; }
+      const existing=MEDS.find(m=>norm(m.name)===norm(name) && norm(m.strength)===norm(x.strength) && (!x.form || norm(m.form)===norm(x.form)));
+      let id=existing?existing.id:null;
+      if(!id){
+        id=slug('m_',name+(x.strength||''),t=>MEDS.some(m=>m.id===t));
+        const rec={ id, active:true, name, strength:String(x.strength||'').trim(), form:String(x.form||'').trim(), schedule:x.schedule||'RX',
+          pack:String(x.pack||'').trim().toUpperCase(), package_size:Math.max(1,parseInt(x.package_size,10)||1), unit_size:null, unit_measure:null, package_type:null, pack_custom:true };
+        const { error }=await db.from('medications').insert(rec);
+        if(error){ errs.push(name+': '+error.message); continue; }
+        MEDS.push(rec); made++;
+      } else linked++;
+      items[x.i].medication_id=id;
+      if(ok.stock){ const nd=String(x.ndc||'').replace(/\D/g,'');
+        if(nd){ for(const c of units){ const { data:inv }=await db.from('ndc_inventory').select('ndcs,active').eq('care_center_id',c.id).eq('medication_id',id).maybeSingle();
+          const cur=inv&&Array.isArray(inv.ndcs)?inv.ndcs.map(String):[]; if(!cur.includes(nd)) cur.push(nd);
+          await db.from('ndc_inventory').upsert({ care_center_id:c.id, medication_id:id, ndcs:cur, active:true },{ onConflict:'care_center_id,medication_id' }); } } }
+    }
+    dirty=true; draw();
+    if(!tableMissing) await save();
+    toast((made?made+' drug'+(made!==1?'s':'')+' added to the Master List':'')+(made&&linked?' · ':'')+(linked?linked+' linked to existing drugs':'')+'.');
+    if(errs.length) uiAlert('Some items weren’t added','<ul style="margin:6px 0 0 18px">'+errs.map(e=>'<li>'+esc(e)+'</li>').join('')+'</ul>');
   }
   async function startOrder(){
     const ccId=body.querySelector('#fsUnit').value; const cc=units.find(c=>c.id===ccId);
