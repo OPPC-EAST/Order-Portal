@@ -3137,13 +3137,13 @@ function floorStockFormDoc(org, units, rx, rows){
     .foot{margin-top:14px;text-align:center;font-size:12px;font-weight:700;color:#5c2530}
     [contenteditable]:focus{outline:none} .page [contenteditable="true"]:hover{background:#fffde8}
     h2{break-after:avoid;page-break-after:avoid}
-    @page{size:letter;margin:.3in}
+    @page{size:letter;margin:.5in .35in .3in .5in}   /* a little more room on the left and top so the form sits right and down */
     /* Compact print layout (applied while printing, and while measuring to fit one page) */
     .sp{display:none}
-    body.pfit{font-size:11px} body.pfit .page{width:7.9in;max-width:none;padding:0 3px;margin:0;display:flex;flex-direction:column;min-height:10.2in}
+    body.pfit{font-size:11px} body.pfit .page{width:7.6in;max-width:none;padding:0 3px;margin:0;display:flex;flex-direction:column;min-height:10.1in}
     body.pfit .sp{display:block;flex:1 1 0;max-height:.45in} body.pfit .sp2{flex-grow:1.6;max-height:.7in}   /* share leftover room at the bottom of the page */
     body.pfit .page > *{flex-shrink:0}
-    body.pfit h2{margin:7px 0 3px;font-size:11px} body.pfit .hd{margin-bottom:5px;padding-bottom:5px} body.pfit .hd img{max-height:40px}
+    body.pfit h2{margin:7px 0 3px;font-size:11px} body.pfit .hd{margin-bottom:5px;padding-bottom:5px;gap:12px} body.pfit .hd img{max-height:40px;max-width:160px} body.pfit .hd h1{font-size:14px} body.pfit .hd .sub{font-size:10.5px}
     body.pfit table.loc td{padding:3px 8px} body.pfit table.loc .s{margin-top:0} body.pfit table.meds td{padding:2px 8px;height:17px} body.pfit th{padding:3px 6px}
     body.pfit .pick{gap:4px 28px;font-size:11px} body.pfit .pick div{min-height:16px} body.pfit .note{margin-top:4px;padding:3px 9px}
     body.pfit .ack{margin-top:5px;padding:4px 10px;font-size:10.5px} body.pfit .sig{margin-top:12px} body.pfit .sig .ln{height:20px} body.pfit .foot{margin-top:5px;font-size:11px}
@@ -3175,13 +3175,13 @@ function floorStockFormDoc(org, units, rx, rows){
   <script>
   // Always print on ONE letter page: use the compact layout, then scale the page down if it is still too tall.
   (function(){
-    var PH=10.15*96;                                   // printable height (11in − 0.3in margins), with a safety margin
+    var PH=10.1*96;                                   // printable height (11in − 0.3in margins), with a safety margin
     var SP=[];
     // Deterministic fit: the compact print layout holds ~30 medication rows on one letter page.
     // Only longer lists are scaled, by row count (no on-screen measuring, which varies by computer).
     function fit(){ var pg=document.querySelector('.page'); document.body.classList.add('pfit'); pg.style.zoom='';
       var n=pg.querySelectorAll('table.meds tbody tr').length, u=pg.querySelectorAll('table.loc tbody tr').length;
-      var need=300+u*30+n*20;                          // approx. height (px) of the compact layout
+      var need=(430+u*25+n*17)*1.02;                   // approx. height (px) of the compact layout (calibrated)
       if(need>PH){ pg.style.zoom=Math.max(0.55, PH/need).toFixed(3); } }
     function resetSpace(){ while(SP.length){ var x=SP.pop(); x[0].style[x[1]]=x[2]; } }
     function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; resetSpace(); }
