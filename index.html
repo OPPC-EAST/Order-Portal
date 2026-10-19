@@ -3152,7 +3152,7 @@ function floorStockFormDoc(org, units, rx, rows){
   </style></head><body><div class="page" contenteditable="true" spellcheck="false">
     <div class="noprint" contenteditable="false" style="display:flex;align-items:center;gap:10px;margin-bottom:8px;padding:8px 10px;background:#eef6ff;border:1px solid #cfe0f2;border-radius:6px;font-size:12px">
       <span style="flex:1">✎ <b>Everything on this form is editable</b> — click any text to change it, or select a row and delete it. Changes apply to this printout only; edit the saved list in the portal to keep them.</span>
-      <button onclick="window.print()" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
+      <button onclick="window.__fitPrint&&window.__fitPrint();setTimeout(function(){window.print();},30)" style="padding:7px 14px;font-weight:700">🖨 Print</button></div>
     <div class="hd"><img src="${LOGO_SRC}" alt="OnePoint Patient Care"><div class="t"><h1>WHOLESALE PURCHASING - FLOOR STOCK ORDER FORM</h1><div class="sub">${esc(org.name)} · Fax completed form to OnePoint Patient Care: <b style="white-space:nowrap">877-791-6774</b></div></div>${org.logo_url?`<img src="${esc(org.logo_url)}" alt="${esc(org.name)}">`:'<div style="width:120px"></div>'}</div>
     <div class="sp"></div><h2>1. Ship to — check one location</h2>
     <table class="loc"><colgroup><col style="width:34px"><col><col style="width:22%"><col style="width:22%"></colgroup><thead><tr><th></th><th>Location &amp; shipping address</th><th>Primary purchaser</th><th>Primary prescriber</th></tr></thead><tbody>${locRows||'<tr><td colspan="4">No locations on file.</td></tr>'}</tbody></table>
@@ -3181,13 +3181,14 @@ function floorStockFormDoc(org, units, rx, rows){
       var bar=document.querySelector('.noprint'), bd=bar?bar.style.display:''; if(bar) bar.style.display='none';
       pg.style.minHeight='0'; var sps=pg.querySelectorAll('.sp'); Array.prototype.forEach.call(sps,function(x){ x.style.display='none'; });
       var z=1, h=pg.getBoundingClientRect().height;
-      for(var k=0;k<4 && h>PH;k++){ z=z*(PH/h)*0.985; pg.style.zoom=z.toFixed(3); h=pg.getBoundingClientRect().height; }
+      // Shrink only when the list really is too long for one page (measured on screen, never during print layout).
+      for(var k=0;k<4 && h>PH*1.02;k++){ z=Math.max(0.6, z*(PH/h)*0.985); pg.style.zoom=z.toFixed(3); h=pg.getBoundingClientRect().height; if(z<=0.6) break; }
       pg.style.minHeight=''; Array.prototype.forEach.call(sps,function(x){ x.style.display=''; });
       if(bar) bar.style.display=bd; }
     function resetSpace(){ while(SP.length){ var x=SP.pop(); x[0].style[x[1]]=x[2]; } }
     function unfit(){ var pg=document.querySelector('.page'); document.body.classList.remove('pfit'); pg.style.zoom=''; resetSpace(); }
-    window.addEventListener('beforeprint', fit); window.addEventListener('afterprint', unfit);
-    if(window.matchMedia){ var mq=window.matchMedia('print'); if(mq.addEventListener) mq.addEventListener('change',function(e){ if(e.matches) fit(); else unfit(); }); }
+    var fitting=false;
+    window.addEventListener('beforeprint', function(){ if(!fitting) fit(); }); window.addEventListener('afterprint', function(){ fitting=false; unfit(); });
     window.__fitPrint=fit;
   })();
   <\/script></body></html>`;
