@@ -3142,11 +3142,13 @@ async function floorStockModal(){
       const mo=new MutationObserver(()=>{ if(!document.body.contains(mv)){ mo.disconnect(); fin(null); } }); mo.observe(document.body,{childList:true,subtree:true});
     });
     if(!ok || !ok.pick.length) return;
-    const norm=v=>String(v||'').trim().toLowerCase();
+    // compare ignoring spaces/case/punctuation so "325 mg" matches "325mg" and "Diphenhydramine HCl" matches "Diphenhydramine"
+    const norm=v=>String(v||'').toLowerCase().replace(/\b(hcl|hydrochloride|sodium|sulfate)\b/g,'').replace(/[^a-z0-9.%\/]/g,'');
+    const formKey=v=>{ v=String(v||'').toLowerCase(); return /chew/.test(v)?'chew':/odt|disintegr/.test(v)?'odt':/\bec\b|delayed/.test(v)?'ec':/tab/.test(v)?'tab':/cap/.test(v)?'cap':/supp/.test(v)?'supp':/patch/.test(v)?'patch':/inj|vial/.test(v)?'inj':/powd/.test(v)?'powder':/cream/.test(v)?'cream':/oint/.test(v)?'oint':/gel/.test(v)?'gel':/syr|sol|susp|liq|conc/.test(v)?'liq':v.replace(/[^a-z]/g,''); };
     let made=0, linked=0; const errs=[];
     for(const k of ok.pick){
       const x=recs[k]; const name=String(x.name||'').trim(); if(!name){ errs.push('(blank name)'); continue; }
-      const existing=MEDS.find(m=>norm(m.name)===norm(name) && norm(m.strength)===norm(x.strength) && (!x.form || norm(m.form)===norm(x.form)));
+      const existing=MEDS.find(m=>norm(m.name)===norm(name) && norm(m.strength)===norm(x.strength) && (!x.form || formKey(m.form)===formKey(x.form)));
       let id=existing?existing.id:null;
       if(!id){
         id=slug('m_',name+(x.strength||''),t=>MEDS.some(m=>m.id===t));
