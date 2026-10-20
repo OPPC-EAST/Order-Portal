@@ -3954,7 +3954,9 @@ async function deleteOrder(id){
 }
 
 async function openOrder(id){
-  const b=$('#appBody');
+  let b=$('#appBody');
+  // Pharmacy staff: keep the main navigation (Order Queue, Facilities, Master List…) on the order screen too.
+  if(ME && ME.isStaff){ if(!['queue'].includes(staffView)) staffView='queue'; await renderStaff({shellOnly:true}); b=$('#staffBody')||b; }
   b.innerHTML='<div class="empty">Loading…</div>';
   const { data:o, error } = await db.from('orders')
     .select('*, care_centers(*), order_lines(*, medications(name,strength,form,schedule,pack,package_size))')
@@ -3975,27 +3977,11 @@ async function openOrder(id){
       .select('medication_id,ndcs,active, medications(name,strength,form)')
       .eq('care_center_id',o.care_center_id);
     const invMap={}; (inv||[]).forEach(r=>invMap[r.medication_id]=r);
-    // Sibling units in the SAME organization use the same NDCs, so fall back to (and offer) an NDC
-    // that's already on file for the drug at any other unit in this org — no need to re-type per unit.
-    const orgId=(o.care_centers||{}).org_id;
-    let orgInv=[]; const orgFirst={};
-    if(orgId){
-      const { data:sibs } = await db.from('care_centers').select('id').eq('org_id',orgId);
-      const sibIds=(sibs||[]).map(c=>c.id).filter(x=>x!==o.care_center_id);
-      if(sibIds.length){
-        const { data:oi } = await db.from('ndc_inventory')
-          .select('medication_id,ndcs,active, medications(name,strength,form)')
-          .in('care_center_id',sibIds);
-        orgInv=oi||[];
-        orgInv.forEach(r=>{ if(r.active===false) return; if(!orgFirst[r.medication_id] && (r.ndcs||[]).length) orgFirst[r.medication_id]=r.ndcs[0]; });
-      }
-    }
     let prefilled=false;
     for(const l of (o.order_lines||[])){
       if((l.ndc||'').trim()) continue;
       const r=invMap[l.medication_id];
       if(r && r.active!==false && (r.ndcs||[]).length){ l.ndc=r.ndcs[0]; l._autoNdc=true; prefilled=true; }
-      else if(orgFirst[l.medication_id]){ l.ndc=orgFirst[l.medication_id]; l._autoNdc=true; prefilled=true; }   // reuse a sibling Reserve unit's NDC
     }
     if(prefilled){ await Promise.all((o.order_lines||[]).filter(l=>l._autoNdc).map(l=>db.from('order_lines').update({ ndc:l.ndc }).eq('id',l.id))); }
     // Build the NDC directory (this unit + sibling units in the org), plus a per-drug index so each
@@ -4007,8 +3993,8 @@ async function openOrder(id){
         if(!seen.has(n)){ seen.add(n); ndcDirAll.push({ ndc:n, name:md.name||'', strength:md.strength||'', form:md.form||'' }); }
       });
     };
-    (inv||[]).forEach(addRow);
-    orgInv.forEach(addRow);
+    (inv||[]).forEach(addRow);          // NDCs on file = this care center's formulary only (never other units)
+    o._invMap=invMap;
     ndcDirAll.sort((a,b)=>(a.name+a.strength).localeCompare(b.name+b.strength,undefined,{numeric:true}));
   }
   // One shared datalist holds the whole care-center directory; each NDC input links to it,
@@ -4055,13 +4041,13 @@ async function openOrder(id){
           return `<tr data-lineid="${l.id}">
             <td><b>${esc(m.name)}</b><div class="muted" style="font-size:12px">${esc(m.strength||'')} · ${esc(m.form||'')} · ${esc(packShort(m))}</div>${ndcEditable?`<button type="button" data-chgstr="${i}" title="Change only the strength of this drug (initials required)" style="border:none;background:none;padding:2px 0;color:var(--brand);font-size:11.5px;font-weight:700;cursor:pointer">✎ Change strength</button>`:''}</td>
             <td>${schBadge(m.schedule)}</td>
-            <td>${ndcEditable?(()=>{ const own=(ndcDir[l.medication_id]||[]); const lbl=[m.strength,m.form].filter(Boolean).join(' · '); const hasDir=ndcDirAll.length>0; return `<input data-ndc="${i}" ${hasDir?'list="ndcDirList"':''} value="${esc(l.ndc||'')}" placeholder="${hasDir?'select or type NDC…':'type NDC…'}" style="width:170px;font-family:var(--mono);font-size:12px">${hasDir?`<div class="muted" style="font-size:10.5px">${own.length?own.length+' on file for this drug · ':''}${esc(lbl)}</div>`:''}`; })():`<span class="mono" style="font-family:var(--mono);font-size:12px">${esc(l.ndc||'—')}</span>`}${l.ndc_one_time?'<div class="muted" style="font-size:10.5px;color:var(--amber)">↺ one-time (this order)</div>':''}</td>
+            <td>${ndcEditable?(()=>{ const own=(ndcDir[l.medication_id]||[]); const lbl=[m.strength,m.form].filter(Boolean).join(' · '); const hasDir=ndcDirAll.length>0; return `<div style="display:flex;align-items:center;gap:4px"><input data-ndc="${i}" value="${esc(l.ndc||'')}" placeholder="${own.length?'select or type NDC…':'type NDC…'}" style="width:150px;font-family:var(--mono);font-size:12px"><button type="button" data-ndcdd="${i}" title="NDCs on file for this drug at this care center" style="border:1px solid var(--line);background:#fff;border-radius:7px;padding:5px 8px;cursor:pointer;font-size:11px">▾</button></div><div class="muted" style="font-size:10.5px">${own.length} on file for this drug${lbl?' · '+esc(lbl):''}</div>`; })():`<span class="mono" style="font-family:var(--mono);font-size:12px">${esc(l.ndc||'—')}</span>`}${l.ndc_one_time?'<div class="muted" style="font-size:10.5px;color:var(--amber)">↺ one-time (this order)</div>':''}</td>
             ${qtyStage?`<td style="text-align:right">${l.requested_qty}</td>
             <td style="text-align:right${postAdj?';background:#fff8ec':''}">${qtyEditable?`<input type="number" min="0" step="1" value="${l.approved_qty}" data-line="${i}" style="width:80px;text-align:right${diff?';border-color:#c0152f;color:#c0152f;background:#fff3f4;font-weight:700':''}">${diff?'<div style="font-size:10px;color:#c0152f;font-weight:700">adjusted (req '+l.requested_qty+')</div>':''}`:`<b style="${diff?'color:#c0152f':''}">${l.approved_qty}</b>${diff?'<div style="font-size:10px;color:#c0152f;font-weight:700">adjusted (req '+l.requested_qty+')</div>':''}`}${postAdjNote}</td>
             <td style="text-align:right" data-pk="${i}"><b>${pk}</b></td>`:''}
           </tr>`;}).join('')}
         </tbody>
-      </table>${ndcDirListHtml}
+      </table>
       ${(o._strengthLog&&o._strengthLog.length)?`<div style="margin-top:12px;border:1px solid #f0d9a8;background:#fffaf0;border-radius:8px;padding:10px 12px">
         <div style="font-size:12.5px;font-weight:800;color:#8a5a12;margin-bottom:4px">✎ Strength change log</div>
         ${o._strengthLog.map(e=>`<div style="font-size:12.5px;line-height:1.5">${esc(new Date(e.created_at).toLocaleString())} — ${esc(e.note||'')}${e.actor_name?' <span class="muted">('+esc(e.actor_name)+')</span>':''}</div>`).join('')}</div>`:''}
@@ -4105,6 +4091,7 @@ async function openOrder(id){
     // Pharmacy is approving / recording supplier-received quantities — persist immediately.
     if(qtyEditable){ const { error }=await db.from('order_lines').update({ approved_qty:v }).eq('id',l.id); if(error) toast('Could not save qty: '+error.message, true); }
   });
+  b.querySelectorAll('[data-ndcdd]').forEach(btn=>btn.onclick=e=>{ e.stopPropagation(); ndcDropdown(o, +btn.dataset.ndcdd, btn, ndcDir); });
   b.querySelectorAll('input[data-ndc]').forEach(inp=>inp.onchange=()=>{
     const i=+inp.dataset.ndc, l=o.order_lines[i], v=inp.value.trim();
     if(v===(l.ndc||'')) return;
@@ -4112,6 +4099,42 @@ async function openOrder(id){
   });
 }
 
+// Care-center-specific NDC list for one order line: pick one, or delete one from this unit's formulary.
+function ndcDropdown(o, i, anchor, ndcDir){
+  document.querySelectorAll('.ndc-pop').forEach(x=>x.remove());
+  const l=o.order_lines[i], m=l.medications||{}, list=(ndcDir[l.medication_id]||[]).slice();
+  const pop=document.createElement('div'); pop.className='ndc-pop';
+  const r=anchor.getBoundingClientRect();
+  pop.style.cssText=`position:fixed;z-index:90;top:${Math.round(r.bottom+4)}px;left:${Math.round(Math.max(8,r.right-300))}px;width:300px;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 10px 28px rgba(20,40,60,.18);padding:8px`;
+  pop.innerHTML=`<div style="font-size:11.5px;font-weight:700;color:#37506e;padding:2px 4px 6px">${esc(m.name||'')} ${esc(m.strength||'')} · ${esc((o.care_centers||{}).name||'this care center')}</div>
+    ${list.length?list.map(n=>`<div style="display:flex;align-items:center;gap:6px;padding:5px 4px;border-top:1px solid #f0f2f5">
+        <button type="button" data-pick="${esc(n)}" style="flex:1;text-align:left;border:none;background:${n===l.ndc?'#eef6ff':'none'};padding:5px 6px;border-radius:6px;cursor:pointer;font-family:var(--mono);font-size:12.5px">${esc(n)}${n===l.ndc?' <span style="font-family:inherit;font-size:10.5px;color:#2c5d84">✓ on this order</span>':''}</button>
+        <button type="button" data-del="${esc(n)}" title="Delete this NDC from ${esc((o.care_centers||{}).name||'this care center')}’s formulary" style="border:1px solid #e0b4bc;background:#fff;color:#c0392b;border-radius:6px;padding:3px 7px;cursor:pointer;font-size:11px">🗑</button></div>`).join('')
+      :'<div class="muted" style="font-size:12px;padding:6px 4px">No NDCs on file for this drug at this care center. Type one in the field to add it.</div>'}`;
+  document.body.appendChild(pop);
+  const close=()=>{ pop.remove(); document.removeEventListener('click',outside,true); };
+  const outside=e=>{ if(!pop.contains(e.target) && e.target!==anchor) close(); };
+  setTimeout(()=>document.addEventListener('click',outside,true),0);
+  pop.querySelectorAll('[data-pick]').forEach(b=>b.onclick=async()=>{
+    const v=b.dataset.pick; close(); if(v===l.ndc) return;
+    const { error }=await db.from('order_lines').update({ ndc:v, ndc_one_time:false }).eq('id',l.id);
+    if(error) return toast('Error: '+error.message, true);
+    toast('NDC '+v+' selected.'); openOrder(o.id);
+  });
+  pop.querySelectorAll('[data-del]').forEach(b=>b.onclick=async()=>{
+    const v=b.dataset.del, cc=(o.care_centers||{}).name||'this care center';
+    close();
+    if(!await uiConfirm(`Delete NDC <b style="font-family:var(--mono)">${esc(v)}</b> for <b>${esc(m.name||'')} ${esc(m.strength||'')}</b> from <b>${esc(cc)}</b>’s formulary?<br><span class="muted" style="font-size:12.5px">Other NDCs for this drug, and other care centers, are not changed.${v===l.ndc?' It will also be cleared from this order line.':''}</span>`,{title:'Delete NDC',okText:'Delete NDC',danger:true})) return;
+    const { data:cur, error:e1 }=await db.from('ndc_inventory').select('ndcs').eq('care_center_id',o.care_center_id).eq('medication_id',l.medication_id).maybeSingle();
+    if(e1||!cur) return toast('Could not load this formulary entry.', true);
+    const left=normNdcs(cur.ndcs||[]).filter(n=>n!==v);
+    const { error:e2 }=await db.from('ndc_inventory').update({ ndcs:left }).eq('care_center_id',o.care_center_id).eq('medication_id',l.medication_id);
+    if(e2) return toast('Could not delete: '+e2.message, true);
+    if(v===l.ndc){ await db.from('order_lines').update({ ndc:null }).eq('id',l.id); }
+    STOCKED_CC=null;
+    toast('NDC '+v+' deleted from '+cc+'.'); openOrder(o.id);
+  });
+}
 function ndcChoiceModal(o, i, newVal){
   const l=o.order_lines[i], m=l.medications||{};
   const ov=document.createElement('div');
@@ -4131,7 +4154,13 @@ function ndcChoiceModal(o, i, newVal){
     const scope=ov.querySelector('input[name=ndcs]:checked').value;
     const { error }=await db.from('order_lines').update({ ndc:newVal, ndc_one_time: scope==='once' }).eq('id',l.id);
     if(error){ toast('Error: '+error.message); return; }
-    if(scope==='master' && newVal){ await db.from('ndc_inventory').upsert({ care_center_id:o.care_center_id, medication_id:l.medication_id, ndcs:normNdcs([newVal]) },{ onConflict:'care_center_id,medication_id' }); }
+    if(scope==='master' && newVal){
+      // ADD to this care center's NDCs for the drug — never replace the ones already on file
+      const { data:cur }=await db.from('ndc_inventory').select('ndcs,active').eq('care_center_id',o.care_center_id).eq('medication_id',l.medication_id).maybeSingle();
+      const keep=normNdcs((cur&&cur.ndcs)||[]); const add=normNdcs([newVal]).filter(n=>!keep.includes(n));
+      const { error:ie }=await db.from('ndc_inventory').upsert({ care_center_id:o.care_center_id, medication_id:l.medication_id, ndcs:keep.concat(add), active:(cur?cur.active!==false:true) },{ onConflict:'care_center_id,medication_id' });
+      if(ie){ toast('Order updated, but the formulary could not be saved: '+ie.message, true); }
+    }
     ov.remove(); toast(scope==='master'?'NDC saved to the care center formulary.':'NDC set for this order only.'); openOrder(o.id);
   };
 }
