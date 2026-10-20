@@ -682,14 +682,18 @@ let RT = null;   // realtime channel
 const CART_LS='oppc_cart_v1';
 function safeLS(fn){ try{ return fn(); }catch(e){ return null; } }
 function cartKey(){ return (ME&&ME.userId?ME.userId:'anon')+':'+(CURRENT_CC?CURRENT_CC.id:''); }
-function loadCartStore(){ const raw=safeLS(()=>localStorage.getItem(CART_LS)); if(raw){ try{ return JSON.parse(raw)||{}; }catch(e){} } return {}; }
+// Pharmacy staff often share one login: their working cart lives in this tab only (sessionStorage) so two
+// people building orders can't overwrite each other's cart. Hospice carts stay in localStorage so a nurse
+// can resume a saved cart after signing back in.
+function cartStorage(){ return (ME && ME.isStaff) ? window.sessionStorage : window.localStorage; }
+function loadCartStore(){ const raw=safeLS(()=>cartStorage().getItem(CART_LS)); if(raw){ try{ return JSON.parse(raw)||{}; }catch(e){} } return {}; }
 function saveCart(){
   if(!ME||!CURRENT_CC) return;
   const store=loadCartStore();
   const cart={}; Object.keys(CART).forEach(k=>{ if(CART[k]>0) cart[k]=CART[k]; });
   if(Object.keys(cart).length){ store[cartKey()]={ cart, nf:[...NEW_TO_FORMULARY].filter(id=>cart[id]), ts:new Date().toISOString() }; }
   else { delete store[cartKey()]; }
-  safeLS(()=>localStorage.setItem(CART_LS, JSON.stringify(store)));
+  safeLS(()=>cartStorage().setItem(CART_LS, JSON.stringify(store)));
 }
 function loadCartFor(){ const s=loadCartStore()[cartKey()]; CART = (s&&s.cart)?{...s.cart}:{}; NEW_TO_FORMULARY=new Set((s&&s.nf)||[]); return s&&s.ts; }
 /* ---- Pending carts: unfinished self-order carts saved as drafts, per user + care center ----
@@ -798,7 +802,17 @@ function promptResumeCart(ts){
   ov.querySelector('[data-stash]').onclick=()=>{ stashCartAsDraft(); close(); toast('Cart saved to Pending Carts — starting a new order.'); hospTab='order'; renderOrdering(); };
 }
 
+// Closing the tab ends the login (the token lives in sessionStorage). Browsers can bring a closed tab back
+// with its sessionStorage ("reopen closed tab" / restore on startup); a heartbeat catches that case so a
+// tab that was closed for more than a few minutes must sign in again. A normal reload keeps the session.
+const HB_KEY='oppc-portal-hb', HB_MAX=10*60*1000;
+function beat(){ try{ sessionStorage.setItem(HB_KEY, String(Date.now())); }catch(e){} }
 async function boot(){
+  { let last=0; try{ last=+sessionStorage.getItem(HB_KEY)||0; }catch(e){}
+    const { data:{ session:s0 } } = await db.auth.getSession();
+    if(s0 && (!last || Date.now()-last>HB_MAX)){ try{ await db.auth.signOut({ scope:'local' }); }catch(e){} try{ sessionStorage.removeItem('oppc-portal-auth'); }catch(e){} } }
+  beat(); setInterval(beat, 30*1000);
+  window.addEventListener('pagehide', beat); document.addEventListener('visibilitychange', beat);
   const { data:{ session } } = await db.auth.getSession();
   if(session){ await afterLogin(session); } else { showLogin(); }
   db.auth.onAuthStateChange((_e, s)=>{ if(!s && !IDLE_OUT){ showLogin(); } });
@@ -881,7 +895,7 @@ function wireChrome(){
     try{ if(typeof saveCart==='function') saveCart(); }catch(e){}
     try{ if(RT){ db.removeChannel(RT); RT=null; } }catch(e){}
     // 2) Try a clean Supabase sign-out, but never let it block the logout (1.5s cap).
-    try{ await Promise.race([ db.auth.signOut(), new Promise(r=>setTimeout(r,1500)) ]); }catch(e){}
+    try{ await Promise.race([ db.auth.signOut({ scope:'local' }), new Promise(r=>setTimeout(r,1500)) ]); }catch(e){}   // this tab only — other users on the same account stay signed in
     // 3) Force-clear the session token no matter what, so the reload lands on the login screen.
     try{ sessionStorage.removeItem('oppc-portal-auth'); }catch(e){}
     try{ localStorage.removeItem('oppc-portal-auth'); }catch(e){}
@@ -922,7 +936,7 @@ async function idleLogout(){
   try{ if(PHARM_BUILD) await pharmacyAutoSaveDraft(); }catch(e){}
   try{ if(typeof saveCart==='function') saveCart(); }catch(e){}
   try{ if(RT){ db.removeChannel(RT); RT=null; } }catch(e){}
-  try{ await db.auth.signOut(); }catch(e){}
+  try{ await db.auth.signOut({ scope:'local' }); }catch(e){}   // this tab only
   ME=null;
   showLogin('You were signed out after 30 minutes of inactivity. Your cart and any work in progress were saved — sign back in to pick up where you left off.');
   // Keep the guard up briefly so the SIGNED_OUT auth event (which fires a blank
@@ -4232,8 +4246,7 @@ async function advance(o, to){
   }
   const patch={ status:to };
   if(to==='complete'){ patch.delivered=true; patch.delivered_at=new Date().toISOString(); }
-  const { error } = await db.from('orders').update(patch).eq('id',o.id);
-  if(error) return toast('Error: '+error.message);
+  if(!await guardedOrderUpdate(o, patch)) return;
   if(to==='complete' && o._shipment){ await db.from('shipments').update({ delivered_at:new Date().toISOString().slice(0,10) }).eq('order_id',o.id); }
   await db.from('order_events').insert({ order_id:o.id, type:to, actor_id:ME.userId, actor_name:ME.fullName });
   const msg={ review:'Marked as received.', approved:'Order approved.', ordered:'Wholesale order placed.', complete:'Order marked delivered & complete.' }[to]||'Updated.';
@@ -4245,7 +4258,7 @@ async function stepBack(o){
   if(idx<=0) return; const to=flow[idx-1];
   const patch={ status:to };
   if(to==='approved'){ patch.dea222_requested=false; patch.dea222_received=false; }  // stepping back before the 222 request
-  await db.from('orders').update(patch).eq('id',o.id);
+  if(!await guardedOrderUpdate(o, patch)) return;
   await db.from('order_events').insert({ order_id:o.id, type:to+' (moved back)', actor_id:ME.userId, actor_name:ME.fullName });
   toast('Moved back to '+(STATUS_LABEL[to]||to)+'.'); openOrder(o.id);
 }
@@ -4260,8 +4273,7 @@ async function requestDea222(o){
     + `\n\nPlease complete and MAIL your original DEA Form 222 to:\n${PHARMACY.name}\n${PHARMACY.addr}\n\nThen log in to the portal and click "I have mailed the DEA 222" on this order. Schedule II items ship only after we receive your 222.\n\nThank you,\n${PHARMACY.name}\nPhone ${PHARMACY.phone} · Fax ${PHARMACY.fax}`;
   const href=`mailto:${encodeURIComponent(o.purchaser_email||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   const a=document.createElement('a'); a.href=href; a.target='_blank'; document.body.appendChild(a); a.click(); a.remove();
-  const { error }=await db.from('orders').update({ status:'dea', dea222_requested:true }).eq('id',o.id);
-  if(error) return toast('Error: '+error.message);
+  if(!await guardedOrderUpdate(o, { status:'dea', dea222_requested:true })) return;
   await db.from('order_events').insert({ order_id:o.id, type:'dea222_requested', actor_id:ME.userId, actor_name:ME.fullName, note:'DEA 222 requested from hospice' });
   toast('DEA 222 request email opened. Order moved to DEA 222 step.'); openOrder(o.id);
 }
@@ -4373,8 +4385,7 @@ async function markShipped(o){
   const trackingStart=(o._shipment&&o._shipment.tracking_start)||nextBusinessDay(today);
   const r=await shipUpsert(o,{ shipped:true, ship_date:((o._shipment&&o._shipment.ship_date)||today), tracking_start:trackingStart });   // keep a date already entered at step 8
   if(!r) return;
-  const { error } = await db.from('orders').update({ status:'shipped' }).eq('id',o.id);
-  if(error) return toast('Error: '+error.message);
+  if(!await guardedOrderUpdate(o, { status:'shipped' })) return;
   await db.from('order_events').insert({ order_id:o.id, type:'shipped', actor_id:ME.userId, actor_name:ME.fullName, note:tracking.length?('Tracking: '+tracking.join(', ')):'Shipped' });
   SHIP_EDIT=null; toast('Order marked shipped.'); openOrder(o.id);
 }
@@ -5382,13 +5393,56 @@ function csRangePreset(kind){
 }
 
 // ---- realtime: refresh the current view when orders change -----------------
+// Another user saved a change to an order. Shared data refreshes, but this user's own page, navigation,
+// open dialogs and unsaved typing are never replaced.
+let RT_T=null;
+function onOrderChanged(payload){
+  if(!ME) return;
+  const rec=(payload&&(payload.new&&payload.new.id?payload.new:payload.old))||{};
+  clearTimeout(RT_T);
+  RT_T=setTimeout(async()=>{
+    if(ME.isStaff){
+      // the order I have open was changed by someone else → offer a reload instead of yanking the screen
+      if(ACTIVE_ORDER && rec.id===ACTIVE_ORDER.id){
+        // ignore echoes of what this screen already shows (e.g. this user's own save)
+        const nw=(payload&&payload.new)||{}; const same=Object.keys(nw).every(k=>/updated_at|_at$/.test(k) || !(k in ACTIVE_ORDER) || JSON.stringify(nw[k])===JSON.stringify(ACTIVE_ORDER[k]));
+        if(!same && payload.eventType!=='INSERT') showStaleBanner();
+        return; }
+      const busy=document.querySelector('.modal-ov, .ndc-pop') || (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName) && !document.activeElement.closest('#qSticky'));
+      // live-refresh only the queue list, and only when it's on screen and I'm not mid-task
+      if(staffView==='queue' && !ACTIVE_ORDER && !PHARM_BUILD && !busy && $('#queue')){
+        const host=$('#staffBody'); const y=window.scrollY;
+        try{ const { count }=await db.from('orders').select('id',{count:'exact',head:true}).eq('status','submitted'); NEW_ORDER_COUNT=count||0; }catch(e){}
+        if(host){ await renderQueue(host); window.scrollTo(0,y); }
+      } else {
+        try{ const { count }=await db.from('orders').select('id',{count:'exact',head:true}).eq('status','submitted'); NEW_ORDER_COUNT=count||0; const t=document.querySelector('.staffnav-sticky [data-sv="queue"]'); if(t){ let b=t.querySelector('.newpill'); if(NEW_ORDER_COUNT>0){ if(!b){ b=document.createElement('span'); b.className='newpill'; t.appendChild(document.createTextNode(' ')); t.appendChild(b); } b.textContent=NEW_ORDER_COUNT+' new'; } else if(b) b.remove(); } }catch(e){}
+      }
+    } else if(CURRENT_CC && hospTab==='mine' && document.getElementById('moList') && !document.querySelector('.modal-ov')){
+      renderMyOrders();
+    }
+  }, 600);
+}
+function showStaleBanner(){
+  if(document.getElementById('staleBanner')) return;
+  const host=$('#staffBody')||$('#appBody'); if(!host) return;
+  const d=document.createElement('div'); d.id='staleBanner';
+  d.style.cssText='position:sticky;top:120px;z-index:16;margin:8px 0;padding:10px 14px;border:1px solid #f0d9a8;background:#fff8e6;border-radius:9px;display:flex;align-items:center;gap:10px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.06)';
+  d.innerHTML='<span style="flex:1">↻ <b>This order was just updated by another user.</b> Reload to see the latest before making changes.</span><button class="btn-primary btn-sm" id="staleReload">Reload order</button>';
+  host.insertBefore(d, host.firstChild);
+  d.querySelector('#staleReload').onclick=()=>{ if(ACTIVE_ORDER) openOrder(ACTIVE_ORDER.id); };
+}
+// Status changes only apply if the order is still in the state this user is looking at; otherwise
+// someone else already moved it, and we reload instead of silently overwriting their change.
+async function guardedOrderUpdate(o, patch){
+  const { data, error }=await db.from('orders').update(patch).eq('id',o.id).eq('status',o.status).select('id');
+  if(error){ toast('Error: '+error.message, true); return false; }
+  if(!data || !data.length){ toast('This order was already updated by another user — showing the latest.', true); openOrder(o.id); return false; }
+  return true;
+}
 function subscribeRealtime(){
   if(RT){ db.removeChannel(RT); RT=null; }
   RT = db.channel('orders-live')
-    .on('postgres_changes',{ event:'*', schema:'public', table:'orders' }, ()=>{
-      if(ME.isStaff && !ACTIVE_ORDER){ renderStaff(); }
-      else if(!ME.isStaff && CURRENT_CC && hospTab==='mine'){ renderMyOrders(); }
-    })
+    .on('postgres_changes',{ event:'*', schema:'public', table:'orders' }, (payload)=>{ try{ onOrderChanged(payload); }catch(e){} })
     .subscribe();
 }
 
