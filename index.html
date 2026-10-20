@@ -4874,7 +4874,10 @@ let NDC_UNASSIGNED_ONLY=false;
 async function renderNdcAdmin(host){
   const { data:ccs } = await db.from('care_centers').select('id,name').order('name');
   NDC_CCS = ccs||[];
-  host.innerHTML=`<div class="section-head" style="margin-top:6px"><h2 style="font-size:19px">Care Center Formulary</h2><span class="spacer"></span><button class="btn-ghost btn-sm" id="ndcPrint" style="color:var(--brand);border-color:#e0b4bc">🖨 Print list</button><button class="btn-ghost btn-sm" id="ndcCross" style="color:var(--brand);border-color:#e0b4bc">🔎 Find a drug across all units</button><select id="ndcCc" style="min-width:240px"><option value="">Select a care center…</option>${NDC_CCS.map(c=>`<option value="${c.id}" ${c.id===NDC_CC?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div id="ndcBody"><div class="empty">Choose a care center to view its formulary — or use “Find a drug across all units” to manage one drug across every care center at once.</div></div>`;
+  host.innerHTML=`<div class="ml-sticky" id="ndcSticky"><div class="section-head" style="margin:0 0 8px"><h2 style="font-size:19px;margin:0">Care Center Formulary</h2><span class="spacer"></span><button class="btn-ghost btn-sm" id="ndcPrint" style="color:var(--brand);border-color:#e0b4bc">🖨 Print list</button><button class="btn-ghost btn-sm" id="ndcCross" style="color:var(--brand);border-color:#e0b4bc">🔎 Find a drug across all units</button><select id="ndcCc" style="min-width:240px"><option value="">Select a care center…</option>${NDC_CCS.map(c=>`<option value="${c.id}" ${c.id===NDC_CC?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div id="ndcCtl"></div></div><div id="ndcBody"><div class="empty">Choose a care center to view its formulary — or use “Find a drug across all units” to manage one drug across every care center at once.</div></div>`;
+  // keep the header, search and bulk controls pinned under the (already sticky) staff nav
+  { const _nav=document.querySelector('.staffnav-sticky'), _s=document.getElementById('ndcSticky');
+    if(_s){ const t=_nav?(parseInt(getComputedStyle(_nav).top)||66):66, h=_nav?_nav.offsetHeight:54; _s.style.top=(t+h)+'px'; } }
   $('#ndcCc').onchange=()=>{ NDC_CC=$('#ndcCc').value; NDC_SEARCH=''; drawNdc(NDC_CC); };
   $('#ndcCross').onclick=()=>crossUnitModal();
   $('#ndcPrint').onclick=()=>{ if(!NDC_CC) return toast('Select a care center first.', true); printCcFormulary(NDC_CC); };
@@ -4961,13 +4964,13 @@ async function printCcFormulary(ccId){
   openDoc(doc);
 }
 async function drawNdc(ccId){
-  const body=$('#ndcBody'); if(!ccId){ body.innerHTML='<div class="empty">Choose a care center.</div>'; return; }
+  const body=$('#ndcBody'), ctl=$('#ndcCtl'); if(ctl) ctl.innerHTML=''; if(!ccId){ body.innerHTML='<div class="empty">Choose a care center.</div>'; return; }
   body.innerHTML='<div class="card"><div class="empty">Loading…</div></div>';
   await loadMeds();
   const { data:inv } = await db.from('ndc_inventory').select('*').eq('care_center_id',ccId);
   NDC_ROWS={}; (inv||[]).forEach(r=>NDC_ROWS[r.medication_id]=r);
   const ccName=(NDC_CCS.find(c=>c.id===ccId)||{}).name||'';
-  body.innerHTML=`
+  (ctl||body).innerHTML=`
     <div class="muted" style="font-size:12.5px;margin-bottom:10px">This unit's formulary — every drug from the master log, with the NDC(s) this care center's Omnicell stocks. Assign an NDC to stock it; <b>Deactivate</b> removes the drug from this unit's ordering only (the master log is unchanged).</div>
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
       <input id="ndcSearch" placeholder="Search drugs or NDC…" value="${esc(NDC_SEARCH)}" style="flex:1;min-width:200px"><select id="ndcSched" style="min-width:150px"><option value="all">All schedules</option><option value="c2">Schedule II</option><option value="c35">Schedule III–V</option><option value="nc">Non-controlled</option></select>
@@ -4980,8 +4983,8 @@ async function drawNdc(ccId){
       <span style="flex:1"></span>
       <button class="btn-ghost btn-sm" id="ccActSel">✓ Activate selected</button>
       <button class="btn-ghost btn-sm" id="ccDeactSel" style="color:#c0392b;border-color:#e0b4bc">Deactivate selected</button>
-    </div>
-    <div class="card" style="overflow-x:auto" id="ndcTbl"></div>`;
+    </div>`;
+  { const tbl='<div class="card" style="overflow-x:auto" id="ndcTbl"></div>'; if(ctl) body.innerHTML=tbl; else body.insertAdjacentHTML('beforeend',tbl); }
   $('#ndcSearch').oninput=e=>{ NDC_SEARCH=e.target.value; drawNdcRows(ccId); };
   { const s=$('#ndcSched'); if(s){ s.value=NDC_SCHED; s.onchange=e=>{ NDC_SCHED=e.target.value; drawNdcRows(ccId); }; } }
   $('#ndcUnassigned').onchange=e=>{ NDC_UNASSIGNED_ONLY=e.target.checked; drawNdcRows(ccId); };
