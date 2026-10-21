@@ -4531,7 +4531,7 @@ async function centerModal(c, presetOrg){
   c=c||{name:'',short:'',color:'#0e7490',org_id:presetOrg||(FAC_ORGS[0]||{}).id||'',ship_to:'',phone:'',facility_dea:'',permit:'',unit_mgr:''};
   let rx=[]; if(!isNew){ const {data}=await db.from('prescribers').select('*').eq('care_center_id',c.id).order('is_primary',{ascending:false}); rx=data||[]; }
   const orgOpts=FAC_ORGS.map(o=>`<option value="${o.id}" ${c.org_id===o.id?'selected':''}>${esc(o.name)}</option>`).join('');
-  const ov=modal(`<h3 style="margin:0 0 8px">${isNew?'Add facility':'Edit facility'}${isNew?'':` — <span style="color:var(--brand)">${esc(c.name||'')}</span>`}</h3>
+  const ov=modal(`<div class="fac-sticky" style="position:sticky;top:-20px;z-index:3;background:#fff;margin:-20px -22px 10px;padding:20px 60px 10px 22px;border-bottom:1px solid #e3e8ee"><h3 style="margin:0">${isNew?'Add facility':'Edit facility'}${isNew?'':` — <span style="color:var(--brand)">${esc(c.name||'')}</span>`}</h3></div>
     <div class="mfld"><label>Organization</label><select id="c_org">${orgOpts}</select></div>
     <div class="mfld"><label>Facility name</label><input id="c_name" value="${esc(c.name||'')}"></div>
     <div class="mrow"><div class="mfld"><label>Short</label><input id="c_short" maxlength="3" value="${esc(c.short||'')}"></div>
@@ -4566,6 +4566,7 @@ async function centerModal(c, presetOrg){
     <div class="muted" style="font-size:12px;margin:2px 0 6px">Choose the linked (default) prescriber with the radio. Each prescriber needs First, Last, Prescriber DEA #, and NPI.</div>
     <div id="rxList"></div><button class="btn-ghost btn-sm" id="rxAdd" style="margin-top:8px">＋ Add prescriber</button>
     <div class="m-foot" style="gap:8px;flex-wrap:wrap">${isNew?'':`<button class="btn-ghost" data-del style="color:#c0392b;border-color:#e0b4bc">🗑 Delete permanently</button>${c.active===false?'<button class="btn-ghost" data-act style="color:#12876a;border-color:#9ed3bf;margin-right:auto">✓ Activate facility</button>':'<button class="btn-ghost" data-deact style="color:#8a5a12;border-color:#e6c98f;margin-right:auto">Deactivate</button>'}`}<button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,600);
+  { const hx=ov.querySelector('.modal-x'), hs=ov.querySelector('.fac-sticky'); if(hx&&hs){ hs.appendChild(hx); hx.style.top='16px'; hx.style.right='16px'; } }  // title + ✕ stay pinned while scrolling
   let work=rx.map(p=>({...p})); if(!work.length) work=[{first_name:'',last_name:'',npi:'',dea:'',is_primary:true}];
   function drawRx(){ const el=ov.querySelector('#rxList'); el.innerHTML=work.map((p,i)=>`
       <div style="border:1px solid ${p.is_primary?'var(--brand)':'var(--line)'};border-radius:11px;padding:12px 14px;margin-top:8px;background:${p.is_primary?'var(--brand-tint)':'#fff'}">
