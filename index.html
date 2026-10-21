@@ -1652,7 +1652,7 @@ function build222Doc(o, role){
   body.role-supplier:not(.supfull) .pf{ display:none !important; }
   @page{size:11in 8.5in;margin:0}
  }
-</style></head><body class="role-${role}">
+</style></head><body class="role-${role}${sup?'':' hiprint'}">
 <div id="stageWrap"><div id="stage"><div id="page"><img id="bg" alt="DEA 222 form" src="${DEA222_IMG}"><div id="overlay"></div><div id="wm" aria-hidden="true"></div></div></div></div>
 <div id="bar">
  ${sup?`<div class="grid"><div class="blk"><b>SCHEDULE II ITEMS (${items.length}) — enter NDC &amp; shipment</b>
@@ -1665,7 +1665,7 @@ function build222Doc(o, role){
  <div class="ctl">
    <label class="toggle"><input type="checkbox" id="tBg" checked> Show form image (preview)</label>
    <label class="toggle"><input type="checkbox" id="tProof"> Print form image too (proof on blank paper)</label>
-   ${sup?'':`<label class="toggle" title="Keeps the yellow highlight on the hospice-completed fields when you print or Save as PDF — use this for the copy you send to the approver."><input type="checkbox" id="tHilite"> Keep yellow highlights when printing / saving as PDF</label>`}
+   ${sup?'':`<label class="toggle" title="Keeps the yellow highlight on the hospice-completed fields when you print or Save as PDF — use this for the copy you send to the approver."><input type="checkbox" id="tHilite" checked> Keep yellow highlights when printing / saving as PDF</label>`}
    ${sup?`<label class="toggle"><input type="checkbox" id="tFull"> Print full copy (include purchaser fields)</label>`:''}
    <span class="cg">Zoom <input type="range" id="zoom" min="0.4" max="1.2" step="0.05" value="0.72"></span>
  </div>
@@ -2928,6 +2928,14 @@ let PHARM_REORDER_FROM=null;
 // Stored in floor_stock_items (60b_floor_stock.sql). Used to (1) print a fax-back order form listing
 // every location and (2) start a pharmacy-generated order where quantity = number of packages.
 let FLOOR_NDC={};
+// Is this care center shown in the Floor stock window? Uses the saved per-facility setting; before that
+// setting exists, Reserve Care and Horizon units are on and every other facility is off.
+function floorStockOn(c){
+  if(!c) return false;
+  if(typeof c.floor_stock_enabled==='boolean') return c.floor_stock_enabled;
+  const org=(c.organizations&&c.organizations.name)||((typeof FAC_ORGS!=='undefined'&&FAC_ORGS||[]).find(o=>o.id===c.org_id)||{}).name||'';
+  return /reserve|horizon/i.test(org+' '+(c.name||''));
+}
 // Reserve Care default floor stock list (from the wholesaler favorites list) — editable after loading.
 const FLOOR_DEFAULTS_RESERVE=[
  ['Acetaminophen 325 mg Tab','50 tablets','00536132706'],
@@ -2958,7 +2966,11 @@ async function floorStockModal(){
   await loadMeds();
   const { data:orgs, error:oe }=await db.from('organizations').select('id,name,logo_url').order('name');
   if(oe) return toast('Could not load organizations: '+oe.message, true);
-  const list=(orgs||[]); if(!list.length) return toast('No organizations found.', true);
+  let { data:allCc, error:ce }=await db.from('care_centers').select('id,org_id,name,active,floor_stock_enabled,organizations(name)');
+  if(ce) ({ data:allCc }=await db.from('care_centers').select('id,org_id,name,active,organizations(name)'));   // setting not added yet → defaults
+  const onOrgs=new Set((allCc||[]).filter(c=>c.active!==false && floorStockOn(c)).map(c=>c.org_id));
+  const list=(orgs||[]).filter(o=>onOrgs.has(o.id));
+  if(!list.length) return toast('No care centers are set to show in Floor stock. Turn on “Show in Floor stock” for a facility in Facilities.', true);
   let org=list.find(o=>/reserve/i.test(o.name||''))||list[0];
   let items=[], units=[], dirty=false, tableMissing=false, locked=true, usingDefaults=false;
   // Fax-form ship-to overrides per location (cabinets "… - Omnicell 1/2" share one location).
@@ -3005,7 +3017,7 @@ async function floorStockModal(){
       db.from('floor_stock_items').select('*').eq('org_id',org.id).order('sort_no'),
       db.from('care_centers').select('*').eq('org_id',org.id).order('name')]);
     tableMissing=!!ie;
-    units=(cc||[]).filter(c=>c.active!==false);
+    units=(cc||[]).filter(c=>c.active!==false && floorStockOn(Object.assign({organizations:{name:org.name}},c)));
     { const ids=units.map(c=>c.id); const { data:rx }=ids.length?await db.from('prescribers').select('*').in('care_center_id',ids):{data:[]}; rxAll=rx||[]; }
     locOv={}; (it||[]).filter(r=>String(r.medication_id||'').startsWith(LOC_PREFIX)).forEach(r=>{ locOv[String(r.medication_id).slice(LOC_PREFIX.length)]={ purchaser:r.package||'', prescriber:r.ndc||'' }; });
     it=(it||[]).filter(r=>!String(r.medication_id||'').startsWith(LOC_PREFIX));
@@ -4540,6 +4552,7 @@ async function centerModal(c, presetOrg){
       <label class="toggle" id="c_lockwrap" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:10px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;${c.ordering_mode==='pharmacy'?'':'display:none'}"><input type="checkbox" id="c_lockqty" ${c.lock_quantities?'checked':''} style="width:20px;height:20px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">🔒 <b>Lock quantities for ${esc(c.name||'this facility')}</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">The care center can verify, approve, and print, but <b>cannot adjust</b> the quantities the pharmacy set.</span></span></label>
       <label class="toggle" id="c_attachwrap" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px;${c.ordering_mode==='pharmacy'?'':'display:none'}"><input type="checkbox" id="c_emailattach" ${c.pharm_email_attachments?'checked':''} style="width:20px;height:20px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">📎 <b>Attach documents to the approval email</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">When this facility's order is submitted, the portal also downloads a combined PDF — the <b>Wholesale Order</b> and a <b>DEA 222 preview</b> — to attach to the approval email. Handy for onboarding new pharmacy customers. Off = email only, as before.</span></span></label>
       <label class="toggle" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px"><input type="checkbox" id="c_partialqty" ${c.allow_partial_qty?'checked':''} style="width:18px;height:18px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">📦 <b>Allow partial quantities</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">Let this facility order <b>below</b> full package size (useful for initial bulk stock). Turn off afterward to re-enforce full-package ordering.</span></span></label>
+      <label class="toggle" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px"><input type="checkbox" id="c_floorstock" ${floorStockOn(c)?'checked':''} style="width:18px;height:18px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">🧺 <b>Show in Floor stock</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">Include this care center in the Floor stock window — the fax form’s ship-to locations and the “Create floor stock order” list. Has no effect on anything else.</span></span></label>
       <label class="toggle" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px"><input type="checkbox" id="c_allowcopy" ${c.allow_copy?'checked':''} style="width:18px;height:18px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">📋 <b>Allow “Copy to other units”</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">Show the copy option on this facility's orders so an order can be duplicated to the other copy-enabled units (e.g. identical initial stock). Copies only go to units that also have this on.</span></span></label>
     </div>
     <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:14px">Order cutoff &amp; ship schedule</div>
@@ -4552,7 +4565,7 @@ async function centerModal(c, presetOrg){
     <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:14px">Prescribers of record</div>
     <div class="muted" style="font-size:12px;margin:2px 0 6px">Choose the linked (default) prescriber with the radio. Each prescriber needs First, Last, Prescriber DEA #, and NPI.</div>
     <div id="rxList"></div><button class="btn-ghost btn-sm" id="rxAdd" style="margin-top:8px">＋ Add prescriber</button>
-    <div class="m-foot" style="gap:8px;flex-wrap:wrap">${isNew?'':`${c.active===false?'<button class="btn-ghost" data-act style="color:#12876a;border-color:#9ed3bf;margin-right:auto">✓ Activate facility</button>':'<button class="btn-ghost" data-deact style="color:#8a5a12;border-color:#e6c98f;margin-right:auto">Deactivate</button>'}<button class="btn-ghost" data-del style="color:#c0392b;border-color:#e0b4bc">🗑 Delete permanently</button>`}<button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,600);
+    <div class="m-foot" style="gap:8px;flex-wrap:wrap">${isNew?'':`<button class="btn-ghost" data-del style="color:#c0392b;border-color:#e0b4bc">🗑 Delete permanently</button>${c.active===false?'<button class="btn-ghost" data-act style="color:#12876a;border-color:#9ed3bf;margin-right:auto">✓ Activate facility</button>':'<button class="btn-ghost" data-deact style="color:#8a5a12;border-color:#e6c98f;margin-right:auto">Deactivate</button>'}`}<button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,600);
   let work=rx.map(p=>({...p})); if(!work.length) work=[{first_name:'',last_name:'',npi:'',dea:'',is_primary:true}];
   function drawRx(){ const el=ov.querySelector('#rxList'); el.innerHTML=work.map((p,i)=>`
       <div style="border:1px solid ${p.is_primary?'var(--brand)':'var(--line)'};border-radius:11px;padding:12px 14px;margin-top:8px;background:${p.is_primary?'var(--brand-tint)':'#fff'}">
@@ -4612,6 +4625,8 @@ async function centerModal(c, presetOrg){
     else ({data:saved,error}=await db.from('care_centers').update(rec).eq('id',c.id).select('id,ordering_mode'));
     if(error) return toast('Error: '+error.message, true);
     if(!saved || !saved.length){ toast('Save was blocked by the database — your account may not have permission to edit facilities. Run 15_pharmacy_generated_orders.sql in Supabase.', true); return; }
+    { const fsEl=$('#c_floorstock'); if(fsEl){ const { error:fe }=await db.from('care_centers').update({ floor_stock_enabled:fsEl.checked }).eq('id',ccId);
+        if(fe) toast('Facility saved. The Floor stock setting needs 62_floor_stock_enabled.sql run in Supabase first.', true); } }
     const keep=work.filter(p=>(p.first_name||p.last_name));
     await db.from('prescribers').delete().eq('care_center_id',ccId);
     if(keep.length){ const prim=keep.find(p=>p.is_primary)||keep[0]; const {error:pe}=await db.from('prescribers').insert(keep.map(p=>({care_center_id:ccId,first_name:(p.first_name||'').trim(),last_name:(p.last_name||'').trim(),npi:(p.npi||'').trim(),dea:(p.dea||'').trim(),is_primary:p===prim}))); if(pe) toast('Facility saved; prescriber issue: '+pe.message); }
