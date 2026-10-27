@@ -888,7 +888,7 @@ async function afterLogin(session){
 
 function wireChrome(){
   $('#signout').onclick = async ()=>{
-    clearIdle();
+    clearIdle(); clearCcUnlocks();
     // 1) Save any in-progress work first (same as the idle auto-logout).
     try{ if(typeof AUTOSAVE_T!=='undefined' && AUTOSAVE_T) clearTimeout(AUTOSAVE_T); }catch(e){}
     try{ if(PHARM_BUILD) await pharmacyAutoSaveDraft(); }catch(e){}
@@ -930,7 +930,7 @@ function wireIdle(){
 }
 async function idleLogout(){
   if(IDLE_OUT) return; IDLE_OUT=true;
-  clearIdle();
+  clearIdle(); clearCcUnlocks();
   // Save any in-progress work before the session ends.
   try{ if(typeof AUTOSAVE_T!=='undefined' && AUTOSAVE_T) clearTimeout(AUTOSAVE_T); }catch(e){}
   try{ if(PHARM_BUILD) await pharmacyAutoSaveDraft(); }catch(e){}
@@ -2220,13 +2220,54 @@ async function printDelivery(orderId){ const o=await fetchFull(orderId); if(!o) 
 // HOSPICE
 // ===========================================================================
 let MULTI_CC=false;
+// ---- Care center passwords ---------------------------------------------------
+// A care center can require its own password after the hospice login (Facilities → edit → password).
+// Checked on the server (verify_cc_password); once entered, that unit stays open in this tab until sign-out.
+const CC_UNLOCK_KEY='oppc-cc-unlocked';
+function ccUnlockedSet(){ try{ return new Set((JSON.parse(sessionStorage.getItem(CC_UNLOCK_KEY)||'{}')[ME&&ME.userId])||[]); }catch(e){ return new Set(); } }
+function markCcUnlocked(id){ try{ const all=JSON.parse(sessionStorage.getItem(CC_UNLOCK_KEY)||'{}'); const s=new Set(all[ME.userId]||[]); s.add(id); all[ME.userId]=[...s]; sessionStorage.setItem(CC_UNLOCK_KEY, JSON.stringify(all)); }catch(e){} }
+function clearCcUnlocks(){ try{ sessionStorage.removeItem(CC_UNLOCK_KEY); }catch(e){} }
+async function ccLockMap(ids){
+  if(!ids||!ids.length) return {};
+  try{ const { data, error }=await db.rpc('cc_lock_status',{ ids }); if(error) return {};
+    const m={}; (data||[]).forEach(r=>{ if(r.enabled) m[r.care_center_id]=true; }); return m; }catch(e){ return {}; }
+}
+// Resolves true when the user may open this care center.
+async function gateCareCenter(cc, locks){
+  const locked = locks ? !!locks[cc.id] : !!(await ccLockMap([cc.id]))[cc.id];
+  if(!locked || ccUnlockedSet().has(cc.id)) return true;
+  return await new Promise(res=>{
+    const ov=modal(`<h3 style="margin:0 0 6px">🔒 ${esc(cc.name)}</h3>
+      <div class="muted" style="font-size:13px;margin-bottom:12px">This care center is password protected. Enter its password to continue.</div>
+      <label style="display:block;font-size:12.5px;font-weight:600;margin-bottom:4px">Care center password</label>
+      <div style="display:flex;gap:6px"><input id="ccPw" type="password" autocomplete="off" style="flex:1"><button type="button" class="btn-ghost btn-sm" id="ccPwShow">Show</button></div>
+      <div id="ccPwErr" style="color:#c0392b;font-size:12.5px;min-height:16px;margin-top:6px"></div>
+      <div class="m-foot" style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px"><button class="btn-ghost" id="ccPwCancel">Cancel</button><button class="btn-primary" id="ccPwOk">Open care center</button></div>`, 420);
+    let done=false; const fin=v=>{ if(done) return; done=true; ov.remove(); res(v); };
+    const inp=ov.querySelector('#ccPw'), err=ov.querySelector('#ccPwErr'), ok=ov.querySelector('#ccPwOk');
+    ov.querySelector('#ccPwShow').onclick=e=>{ inp.type=inp.type==='password'?'text':'password'; e.target.textContent=inp.type==='password'?'Show':'Hide'; };
+    ov.querySelector('#ccPwCancel').onclick=()=>fin(false);
+    const go=async()=>{ const pw=inp.value; if(!pw){ err.textContent='Enter the password.'; return; }
+      ok.disabled=true; err.textContent='';
+      const { data, error }=await db.rpc('verify_cc_password',{ cc:cc.id, pw });
+      ok.disabled=false;
+      if(error){ err.textContent='Could not check the password: '+error.message; return; }
+      if(data===true){ markCcUnlocked(cc.id); fin(true); } else { err.textContent='Incorrect password. Please try again.'; inp.select(); } };
+    ok.onclick=go; inp.addEventListener('keydown',e=>{ if(e.key==='Enter') go(); });
+    const mo=new MutationObserver(()=>{ if(!document.body.contains(ov)){ mo.disconnect(); fin(false); } }); mo.observe(document.body,{childList:true,subtree:true});
+    setTimeout(()=>inp.focus(),30);
+  });
+}
 async function renderHospiceHome(){
   const b=$('#appBody');
   const { data:ccs, error } = await db.from('care_centers').select('*').in('org_id', ME.orgIds).eq('active',true).order('name');
   if(error){ b.innerHTML='<div class="err">'+esc(error.message)+'</div>'; return; }
   if(!ccs || !ccs.length){ b.innerHTML='<div class="empty">No care centers available for your account yet.</div>'; return; }
   MULTI_CC = ccs.length>1;
-  if(ccs.length===1){ CURRENT_CC=ccs[0]; hospTab=null; const ts=loadCartFor(); await renderOrdering(); promptResumeCart(ts); return; }
+  const LOCKS=await ccLockMap(ccs.map(c=>c.id));
+  if(ccs.length===1){
+    if(!await gateCareCenter(ccs[0], LOCKS)){ b.innerHTML=`<div class="card" style="padding:28px;text-align:center"><div style="font-size:15px;margin-bottom:12px">🔒 <b>${esc(ccs[0].name)}</b> is password protected.</div><button class="btn-primary" id="ccRetry">Enter password</button></div>`; $('#ccRetry').onclick=()=>renderHospiceHome(); return; }
+    CURRENT_CC=ccs[0]; hospTab=null; const ts=loadCartFor(); await renderOrdering(); promptResumeCart(ts); return; }
   const org=ME.org||{};
   // Item 5: how many pharmacy-generated orders are awaiting approval, per care center.
   const ccIds=ccs.map(c=>c.id); let pendByCc={};
@@ -2239,9 +2280,9 @@ async function renderHospiceHome(){
     <div class="card" id="ccList"></div>`;
   $('#ccList').innerHTML = ccs.map(c=>{ const np=pendByCc[c.id]||0; return `<div class="inbox-row" data-cc="${c.id}"${np?' style="background:#fffaf0"':''}>
       <span class="avatar" style="background:${c.color}22;color:${c.color}">${esc(c.short||'')}</span>
-      <div><b>${esc(c.name)}</b>${np?` <span class="badge b-c35" title="Pharmacy-generated order(s) awaiting your approval">🏥 ${np} pending approval</span>`:''}<div class="muted" style="font-size:12.5px">${esc(c.ship_to||'')}</div></div>
+      <div><b>${esc(c.name)}</b>${LOCKS[c.id]?` <span class="badge" title="Password required to open this care center" style="background:#eef2f6;border:1px solid #d7dee7;color:#37506e">🔒</span>`:''}${np?` <span class="badge b-c35" title="Pharmacy-generated order(s) awaiting your approval">🏥 ${np} pending approval</span>`:''}<div class="muted" style="font-size:12.5px">${esc(c.ship_to||'')}</div></div>
       <span></span><button class="btn-ghost btn-sm">${np?'Review &amp; approve →':'Select →'}</button></div>`; }).join('');
-  b.querySelectorAll('[data-cc]').forEach(r=>r.onclick=async()=>{ CURRENT_CC=ccs.find(c=>c.id===r.dataset.cc); hospTab=null; const ts=loadCartFor(); await renderOrdering(); promptResumeCart(ts); });
+  b.querySelectorAll('[data-cc]').forEach(r=>r.onclick=async()=>{ const cc=ccs.find(c=>c.id===r.dataset.cc); if(!await gateCareCenter(cc, LOCKS)) return; CURRENT_CC=cc; hospTab=null; const ts=loadCartFor(); await renderOrdering(); promptResumeCart(ts); });
 }
 
 let hospTab=null;
@@ -2287,7 +2328,7 @@ async function renderOrdering(){
     </div>
     <div id="htBody"></div>`;
   const sw=$('#switchCC'); if(sw) sw.onclick=()=>{ CURRENT_CC=null; hospTab=null; renderHospiceHome(); };
-  b.querySelectorAll('.pendjump').forEach(x=>x.onclick=async()=>{ const id=x.dataset.cc; const {data:full}=await db.from('care_centers').select('*').eq('id',id).maybeSingle(); if(full){ CURRENT_CC=full; STOCKED_CC=null; hospTab='mine'; await renderOrdering(); } });
+  b.querySelectorAll('.pendjump').forEach(x=>x.onclick=async()=>{ const id=x.dataset.cc; const {data:full}=await db.from('care_centers').select('*').eq('id',id).maybeSingle(); if(full){ if(!await gateCareCenter(full)) return; CURRENT_CC=full; STOCKED_CC=null; hospTab='mine'; await renderOrdering(); } });
   $('#helpBtn').onclick=openGuide;
   b.querySelectorAll('[data-ht]').forEach(t=>t.onclick=()=>{ hospTab=t.dataset.ht; renderOrdering(); });
   if(pharmMode) renderMyOrders();
@@ -4503,7 +4544,7 @@ async function fulfillmentReminder(){
 // ===========================================================================
 // ADMIN SCREENS (Phase 3)
 // ===========================================================================
-let FAC_ORGS=[], FAC_CCS=[], openOrgIds=new Set();
+let FAC_ORGS=[], FAC_CCS=[], openOrgIds=new Set(), FAC_LOCKS=null;   // FAC_LOCKS null = password feature not set up yet
 async function renderFacilities(host){
   host.innerHTML='<div class="section-head" style="margin-top:6px"><h2 style="font-size:19px">Organizations &amp; facilities</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="addOrg">＋ Add organization</button></div><div class="muted" style="font-size:12.5px;margin:-8px 0 8px">Click an organization to expand its care centers.</div><div id="orgAcc"><div class="empty">Loading…</div></div><div id="inactiveFac"></div>';
   $('#addOrg').onclick=()=>orgModal(null);
@@ -4511,7 +4552,10 @@ async function renderFacilities(host){
     db.from('organizations').select('*').order('name'),
     db.from('care_centers').select('*').order('name')
   ]);
-  FAC_ORGS=orgs||[]; FAC_CCS=ccs||[]; drawFacilities();
+  FAC_ORGS=orgs||[]; FAC_CCS=ccs||[];
+  { const { data:lk, error:le }=await db.from('care_center_locks').select('care_center_id,enabled,pw_hash');
+    FAC_LOCKS = le ? null : Object.fromEntries((lk||[]).map(r=>[r.care_center_id,{ enabled:!!r.enabled, hasPw:!!r.pw_hash }])); }
+  drawFacilities();
 }
 function drawFacilities(){
   const host=$('#orgAcc'); if(!host) return;
@@ -4520,7 +4564,7 @@ function drawFacilities(){
     const locs=FAC_CCS.filter(c=>c.org_id===o.id && isActive(c)); const open=openOrgIds.has(o.id);
     const rows=locs.length?locs.map(c=>`<div style="display:flex;gap:12px;align-items:flex-start;padding:11px 14px 11px 44px;border-top:1px solid var(--line)">
         <span class="avatar" style="background:${c.color}22;color:${c.color};flex:none">${esc(c.short||'')}</span>
-        <div style="flex:2;min-width:180px"><b>${esc(c.name)}</b> ${c.ordering_mode==='pharmacy'?'<span class="badge b-c35" style="font-size:10.5px">Pharmacy-order</span>':'<span class="badge b-nc" style="font-size:10.5px">Self-order</span>'}${c.lock_quantities&&c.ordering_mode==='pharmacy'?' <span class="badge" style="font-size:10.5px;background:#f7e3e8;border:1px solid #e0b4bc;color:#8c2231">🔒 Qty locked</span>':''}<div class="muted" style="font-size:12px">${esc(c.ship_to||'—')}</div><div class="muted" style="font-size:12px">Unit mgr: ${esc(c.unit_mgr||'—')}</div></div>
+        <div style="flex:2;min-width:180px"><b>${esc(c.name)}</b> ${c.ordering_mode==='pharmacy'?'<span class="badge b-c35" style="font-size:10.5px">Pharmacy-order</span>':'<span class="badge b-nc" style="font-size:10.5px">Self-order</span>'}${c.lock_quantities&&c.ordering_mode==='pharmacy'?' <span class="badge" style="font-size:10.5px;background:#f7e3e8;border:1px solid #e0b4bc;color:#8c2231">🔒 Qty locked</span>':''}${FAC_LOCKS?((FAC_LOCKS[c.id]&&FAC_LOCKS[c.id].enabled&&FAC_LOCKS[c.id].hasPw)?' <span class="badge" title="A password is required to open this care center" style="font-size:10.5px;background:#eef2f6;border:1px solid #c9d6e6;color:#2c4a63">🔒 Password on</span>':' <span class="badge" title="No extra password" style="font-size:10.5px;background:#fff;border:1px solid #e3e8ee;color:#8a95a1">🔓 No password</span>'):''}<div class="muted" style="font-size:12px">${esc(c.ship_to||'—')}</div><div class="muted" style="font-size:12px">Unit mgr: ${esc(c.unit_mgr||'—')}</div></div>
         <div class="muted" style="font-size:12px;flex:1;min-width:140px">DEA ${esc(c.facility_dea||'—')}<br>Permit ${esc(c.permit||'—')}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"><button class="btn-ghost btn-sm" data-editcc="${c.id}">Edit</button><button class="btn-ghost btn-sm" data-deactcc="${c.id}" style="color:#8a5a12;border-color:#e6c98f">Deactivate</button></div></div>`).join(''):'<div class="muted" style="padding:11px 14px 11px 44px;border-top:1px solid var(--line);font-size:12.5px">No active care centers.</div>';
     return `<div class="card" style="margin-bottom:10px;overflow:hidden">
@@ -4612,6 +4656,14 @@ async function centerModal(c, presetOrg){
       <label class="toggle" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px"><input type="checkbox" id="c_floorstock" ${floorStockOn(c)?'checked':''} style="width:18px;height:18px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">🧺 <b>Show in Floor stock</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">Include this care center in the Floor stock window — the fax form’s ship-to locations and the “Create floor stock order” list. Has no effect on anything else.</span></span></label>
       <label class="toggle" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:8px;padding:11px 13px;border:1px solid var(--line);border-radius:10px"><input type="checkbox" id="c_allowcopy" ${c.allow_copy?'checked':''} style="width:18px;height:18px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">📋 <b>Allow “Copy to other units”</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">Show the copy option on this facility's orders so an order can be duplicated to the other copy-enabled units (e.g. identical initial stock). Copies only go to units that also have this on.</span></span></label>
     </div>
+    <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:14px">Care center password</div>
+    ${FAC_LOCKS===null?'<div class="muted" style="font-size:12px;margin-top:4px">Run <b>63_care_center_passwords.sql</b> in Supabase to turn on care center passwords.</div>':(()=>{ const L=(!isNew&&FAC_LOCKS[c.id])||{enabled:false,hasPw:false}; return `
+    <label class="toggle" style="display:flex;align-items:center;gap:11px;font-size:12.5px;margin-top:6px;padding:11px 13px;border:1px solid var(--line);border-radius:10px"><input type="checkbox" id="c_pwon" ${L.enabled&&L.hasPw?'checked':''} style="width:18px;height:18px;accent-color:var(--brand);flex:none;cursor:pointer"> <span style="flex:1">🔒 <b>Require a password to open this care center</b></span><span class="ihelp" tabindex="0" onclick="event.preventDefault();event.stopPropagation();this.focus();">i<span class="tip">After the hospice signs in, they must enter this care center’s password before it opens. Each care center has its own setting and password. The hospice login itself is not changed.</span></span></label>
+    <div id="c_pwwrap" style="display:${L.enabled&&L.hasPw?'flex':'none'};gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap">
+      <input id="c_pw" type="password" autocomplete="new-password" placeholder="${L.hasPw?'Password is set — type a new one to change it':'Enter a password'}" style="flex:1;min-width:220px">
+      <button type="button" class="btn-ghost btn-sm" id="c_pwshow">Show</button>
+      <span class="muted" style="font-size:11.5px;width:100%">${L.hasPw?'Leave blank to keep the current password.':'Required when the password is turned on.'}</span>
+    </div>`; })()}
     <div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:14px">Order cutoff &amp; ship schedule</div>
     <div class="muted" style="font-size:12px;margin:2px 0 6px">Shown to this facility as its estimated ship date. Orders placed by the cutoff ship on the next ship day.</div>
     <div class="mrow" style="gap:10px">
@@ -4623,7 +4675,10 @@ async function centerModal(c, presetOrg){
     <div class="muted" style="font-size:12px;margin:2px 0 6px">Choose the linked (default) prescriber with the radio. Each prescriber needs First, Last, Prescriber DEA #, and NPI.</div>
     <div id="rxList"></div><button class="btn-ghost btn-sm" id="rxAdd" style="margin-top:8px">＋ Add prescriber</button>
     <div class="m-foot" style="gap:8px;flex-wrap:wrap">${isNew?'':`<button class="btn-ghost" data-del style="color:#c0392b;border-color:#e0b4bc">🗑 Delete permanently</button>${c.active===false?'<button class="btn-ghost" data-act style="color:#12876a;border-color:#9ed3bf;margin-right:auto">✓ Activate facility</button>':'<button class="btn-ghost" data-deact style="color:#8a5a12;border-color:#e6c98f;margin-right:auto">Deactivate</button>'}`}<button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,600);
-  { const hx=ov.querySelector('.modal-x'), hs=ov.querySelector('.fac-sticky'); if(hx&&hs){ hs.appendChild(hx); hx.style.top='16px'; hx.style.right='16px'; } }  // title + ✕ stay pinned while scrolling
+  { const hx=ov.querySelector('.modal-x'), hs=ov.querySelector('.fac-sticky'); if(hx&&hs){ hs.appendChild(hx); hx.style.top='16px'; hx.style.right='16px'; } }
+  { const on=ov.querySelector('#c_pwon'), wrap=ov.querySelector('#c_pwwrap'), sh=ov.querySelector('#c_pwshow'), pw=ov.querySelector('#c_pw');
+    if(on&&wrap) on.onchange=()=>{ wrap.style.display=on.checked?'flex':'none'; if(on.checked&&pw) pw.focus(); };
+    if(sh&&pw) sh.onclick=()=>{ pw.type=pw.type==='password'?'text':'password'; sh.textContent=pw.type==='password'?'Show':'Hide'; }; }  // title + ✕ stay pinned while scrolling
   let work=rx.map(p=>({...p})); if(!work.length) work=[{first_name:'',last_name:'',npi:'',dea:'',is_primary:true}];
   function drawRx(){ const el=ov.querySelector('#rxList'); el.innerHTML=work.map((p,i)=>`
       <div style="border:1px solid ${p.is_primary?'var(--brand)':'var(--line)'};border-radius:11px;padding:12px 14px;margin-top:8px;background:${p.is_primary?'var(--brand-tint)':'#fff'}">
@@ -4683,6 +4738,12 @@ async function centerModal(c, presetOrg){
     else ({data:saved,error}=await db.from('care_centers').update(rec).eq('id',c.id).select('id,ordering_mode'));
     if(error) return toast('Error: '+error.message, true);
     if(!saved || !saved.length){ toast('Save was blocked by the database — your account may not have permission to edit facilities. Run 15_pharmacy_generated_orders.sql in Supabase.', true); return; }
+    { const on=$('#c_pwon'), pwEl=$('#c_pw');
+      if(on && FAC_LOCKS){ const L=FAC_LOCKS[ccId]||{enabled:false,hasPw:false}; const newPw=(pwEl&&pwEl.value)||'';
+        const want=on.checked, changed=(want!==(L.enabled&&L.hasPw)) || !!newPw;
+        if(want && !L.hasPw && !newPw){ toast('Facility saved, but the password was not turned on — enter a password first.', true); }
+        else if(changed){ const { error:pe }=await db.rpc('set_cc_password',{ cc:ccId, on_off:want, pw:newPw||null });
+          if(pe) toast('Facility saved; the care center password could not be updated: '+pe.message, true); } } }
     { const fsEl=$('#c_floorstock'); if(fsEl){ const { error:fe }=await db.from('care_centers').update({ floor_stock_enabled:fsEl.checked }).eq('id',ccId);
         if(fe) toast('Facility saved. The Floor stock setting needs 62_floor_stock_enabled.sql run in Supabase first.', true); } }
     const keep=work.filter(p=>(p.first_name||p.last_name));
