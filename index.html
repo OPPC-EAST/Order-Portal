@@ -617,7 +617,7 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     <div style="text-align:right;margin-top:8px"><a href="#" id="li-forgot" style="color:var(--brand);font-size:12.5px;font-weight:600;text-decoration:none">Forgot password?</a></div>
     <div id="li-forgotbox" class="hidden" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fafbfc">
       <div style="font-size:13px;font-weight:700;margin-bottom:4px">Reset your password</div>
-      <div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:8px">Pharmacy staff: enter your sign-in email. We’ll send a reset link to the recovery email linked to that account.</div>
+      <div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:8px">Pharmacy staff: enter <b>your own</b> pharmacy email (e.g. ppatel@oppc.com). We’ll email you a link to set a new password.</div>
       <input id="li-femail" type="email" placeholder="you@example.com" style="width:100%">
       <div style="display:flex;gap:8px;margin-top:8px"><button class="btn-dark" id="li-fsend" style="flex:1;padding:10px">Send reset link</button><button class="btn-ghost" id="li-fcancel" type="button">Cancel</button></div>
       <div id="li-fmsg" style="font-size:12.5px;margin-top:8px"></div>
@@ -850,6 +850,7 @@ async function resolveLoginEmail(e){ try{ const { data }=await db.rpc('resolve_l
 async function sendResetLink(){
   const msg=$('#li-fmsg'), btn=$('#li-fsend'); const typed=$('#li-femail').value.trim();
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typed)){ msg.style.color='#c0392b'; msg.textContent='Enter your sign-in email.'; return; }
+  if(/^pharmacy@oppc\.com$/i.test(typed)){ msg.style.color='#b4520a'; msg.innerHTML='pharmacy@oppc.com has no mailbox, so a reset link can’t be emailed to it. Sign in with <b>your own</b> pharmacy login (or reset it here with your own email), then change the shared password in <b>Facilities → Pharmacy account</b>.'; return; }
   btn.disabled=true; msg.style.color=''; msg.textContent='Sending…';
   const email=await resolveLoginEmail(typed);
   const redirectTo=location.origin+location.pathname;
@@ -857,7 +858,7 @@ async function sendResetLink(){
   btn.disabled=false;
   if(error && /rate|seconds|too many/i.test(error.message)){ msg.style.color='#c0392b'; msg.textContent='Please wait a minute before requesting another link.'; return; }
   // same answer either way, so the screen never reveals which addresses have accounts
-  msg.style.color='#1d7a4a'; msg.textContent='If that email belongs to a pharmacy account with a linked recovery email, a reset link is on its way. Check the inbox (and spam) and follow the link within an hour.';
+  msg.style.color='#1d7a4a'; msg.textContent='If that email has a pharmacy login, a reset link is on its way. Check the inbox (and spam) and follow the link within an hour.';
 }
 function showRecoveryScreen(){
   $('#view-app').classList.add('hidden'); $('#view-login').classList.remove('hidden');
@@ -4647,6 +4648,7 @@ async function drawPharmacyAccount(){
   const box=$('#pharmAcct'); if(!box) return;
   let info={ email:ME.email, aliases:[] }, ready=true;
   try{ const { data, error }=await db.rpc('my_login_info'); if(error) ready=false; else if(data&&data[0]) info=data[0]; }catch(e){ ready=false; }
+  if(!info.email) info.email=ME.email;
   const aliases=(info.aliases||[]).filter(Boolean);
   box.innerHTML=`<div class="card" style="padding:16px 18px;margin:6px 0 16px">
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:15px">🔐 Pharmacy account</b><span class="muted" style="font-size:12.5px">Signed in as <b>${esc(info.email||'')}</b>${aliases.length?' · also signs in with '+aliases.map(a=>'<b>'+esc(a)+'</b>').join(', '):''}</span></div>
@@ -4658,13 +4660,13 @@ async function drawPharmacyAccount(){
         <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="checkbox" id="pa-show"> Show</label><span class="spacer" style="flex:1"></span><button class="btn-primary btn-sm" id="pa-save">Change password</button></div>
         <div class="muted" style="font-size:11.5px;margin-top:4px">At least 8 characters, with letters, a number and a symbol. Changes the password for everyone using this login.</div>
         <div id="pa-msg" style="font-size:12.5px;margin-top:6px"></div></div>
-      <div><div style="font-size:13px;font-weight:700;margin-bottom:6px">Recovery email</div>
-        ${ready?`<div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:6px">“Forgot password?” sends the reset link to this address. ${aliases.length?'Currently linked: <b>'+esc(info.email||'')+'</b>.':'No recovery email linked yet — reset links would go to <b>'+esc(info.email||'')+'</b>.'}</div>
-        <input id="pa-rec" type="email" placeholder="designated-mailbox@yourdomain.com" style="width:100%">
-        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn-ghost btn-sm" id="pa-link">Link email</button></div>
-        <div class="muted" style="font-size:11.5px;margin-top:4px">Staff can keep signing in with ${esc(aliases[0]||info.email||'the current address')}.</div>
-        <div id="pa-rmsg" style="font-size:12.5px;margin-top:6px"></div>`
-        :'<div class="muted" style="font-size:12.5px">Run <b>65_pharmacy_password_recovery.sql</b> in Supabase to link a recovery email.</div>'}</div>
+      <div><div style="font-size:13px;font-weight:700;margin-bottom:6px">Reset another pharmacy login</div>
+        <div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:6px">Use this for the shared <b>pharmacy@oppc.com</b> login (it has no mailbox, so it can’t receive reset emails). Each person’s own login resets by email from “Forgot password?”.</div>
+        <select id="pa-who" style="width:100%;margin-bottom:6px"><option value="">Loading logins…</option></select>
+        <input id="pa-onew" type="password" placeholder="New password" autocomplete="new-password" style="width:100%;margin-bottom:6px">
+        <input id="pa-onew2" type="password" placeholder="Confirm new password" autocomplete="new-password" style="width:100%">
+        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn-ghost btn-sm" id="pa-oreset">Set password</button></div>
+        <div id="pa-omsg" style="font-size:12.5px;margin-top:6px"></div></div>
     </div></div>`;
   const sh=$('#pa-show'); sh.onchange=()=>['#pa-cur','#pa-new','#pa-new2'].forEach(q=>$(q).type=sh.checked?'text':'password');
   $('#pa-save').onclick=async()=>{ const m=$('#pa-msg'); const cur=$('#pa-cur').value, a=$('#pa-new').value, b=$('#pa-new2').value;
@@ -4681,6 +4683,21 @@ async function drawPharmacyAccount(){
     if(e2) return say('Could not change the password: '+e2.message);
     ['#pa-cur','#pa-new','#pa-new2'].forEach(q=>$(q).value='');
     say('✓ Password changed. Use the new password next time you sign in.', true); };
+  { const sel=$('#pa-who'), om=$('#pa-omsg'); const say=(t,ok)=>{ om.style.color=ok?'#1d7a4a':'#c0392b'; om.textContent=t; };
+    db.rpc('pharmacy_logins').then(({data,error})=>{
+      if(error){ sel.innerHTML='<option value="">Run 66_pharmacy_staff_logins.sql first</option>'; sel.disabled=true; $('#pa-oreset').disabled=true; return; }
+      const mine=String(info.email||ME.email||'').toLowerCase();
+      const list=(data||[]).map(r=>r.email).filter(e=>e && e.toLowerCase()!==mine);
+      sel.innerHTML=list.length?list.map(e=>`<option value="${esc(e)}"${/^pharmacy@/i.test(e)?' selected':''}>${esc(e)}</option>`).join(''):'<option value="">No other pharmacy logins</option>'; });
+    sh.addEventListener('change',()=>['#pa-onew','#pa-onew2'].forEach(q=>$(q).type=sh.checked?'text':'password'));
+    $('#pa-oreset').onclick=async()=>{ const who=sel.value, a=$('#pa-onew').value, b=$('#pa-onew2').value;
+      if(!who) return say('Choose a login.');
+      const bad=pwProblem(a); if(bad) return say(bad);
+      if(a!==b) return say('The passwords don’t match.');
+      if(!await uiConfirm(`Set a new password for <b>${esc(who)}</b>?<br><span class="muted" style="font-size:12.5px">Everyone using that login will need the new password next time they sign in.</span>`,{title:'Reset pharmacy login',okText:'Set password'})) return;
+      const { error }=await db.rpc('set_staff_login_password',{ target:who, pw:a });
+      if(error) return say('Could not set the password: '+error.message);
+      ['#pa-onew','#pa-onew2'].forEach(q=>$(q).value=''); say('✓ Password set for '+who+'.', true); }; }
   const lk=$('#pa-link'); if(lk) lk.onclick=async()=>{ const m=$('#pa-rmsg'); const v=$('#pa-rec').value.trim();
     const say=(t,ok)=>{ m.style.color=ok?'#1d7a4a':'#c0392b'; m.textContent=t; };
     if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return say('Enter a valid email address.');
