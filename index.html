@@ -4381,11 +4381,53 @@ async function requestDea222(o){
   const body=`Hello,\n\nYour wholesale order ${o.order_no} has been approved by ${PHARMACY.name}. It includes Schedule II item(s) that require a completed DEA Form 222 before they can be shipped:\n\n`
     + c2.map(l=>`  • ${(l.medications||{}).name} ${(l.medications||{}).strength||''} — approved qty ${l.approved_qty}`).join('\n')
     + `\n\nPlease complete and MAIL your original DEA Form 222 to:\n${PHARMACY.name}\n${PHARMACY.addr}\n\nThen log in to the portal and click "I have mailed the DEA 222" on this order. Schedule II items ship only after we receive your 222.\n\nThank you,\n${PHARMACY.name}\nPhone ${PHARMACY.phone} · Fax ${PHARMACY.fax}`;
-  const href=`mailto:${encodeURIComponent(o.purchaser_email||'')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
-  const a=document.createElement('a'); a.href=href; a.target='_blank'; document.body.appendChild(a); a.click(); a.remove();
-  if(!await guardedOrderUpdate(o, { status:'dea', dea222_requested:true })) return;
-  await db.from('order_events').insert({ order_id:o.id, type:'dea222_requested', actor_id:ME.userId, actor_name:ME.fullName, note:'DEA 222 requested from hospice' });
-  toast('DEA 222 request email opened. Order moved to DEA 222 step.'); openOrder(o.id);
+  // Preview first: the same recipient, subject and body as before, with Copy and Generate options.
+  let marked=false;
+  const markRequested=async()=>{ if(marked) return true; marked=true;
+    if(!await guardedOrderUpdate(o, { status:'dea', dea222_requested:true })) return false;
+    await db.from('order_events').insert({ order_id:o.id, type:'dea222_requested', actor_id:ME.userId, actor_name:ME.fullName, note:'DEA 222 requested from hospice' });
+    return true; };
+  const ov=modal(`<h3 style="margin:0 0 4px">◆ Request DEA 222 — email preview</h3>
+    <div class="muted" style="font-size:12.5px;margin-bottom:12px">Review the email, then <b>Generate email</b> to open it in your email app, or <b>Copy information</b> and paste it into a new email yourself. Either one moves the order to the DEA 222 step.</div>
+    <label style="display:block;font-size:12px;font-weight:700;color:#37506e;margin-bottom:3px">To</label>
+    <div style="display:flex;gap:6px;margin-bottom:10px"><input id="drTo" value="${esc(o.purchaser_email||'')}" placeholder="No email on file — type the recipient" style="flex:1"><button type="button" class="btn-ghost btn-sm" data-cp="drTo">Copy</button></div>
+    ${o.purchaser_email?'':'<div style="color:#b4520a;font-size:12px;margin:-6px 0 10px">This order has no requester email on file — enter it above.</div>'}
+    <label style="display:block;font-size:12px;font-weight:700;color:#37506e;margin-bottom:3px">Subject</label>
+    <div style="display:flex;gap:6px;margin-bottom:10px"><input id="drSubj" value="${esc(subject)}" readonly style="flex:1;background:#f7f9fb"><button type="button" class="btn-ghost btn-sm" data-cp="drSubj">Copy</button></div>
+    <label style="display:flex;align-items:center;font-size:12px;font-weight:700;color:#37506e;margin-bottom:3px">Email body <span class="spacer" style="flex:1"></span><button type="button" class="btn-ghost btn-sm" data-cp="drBody" style="font-weight:600">Copy</button></label>
+    <textarea id="drBody" readonly style="width:100%;height:290px;font-family:inherit;font-size:13px;line-height:1.5;background:#f7f9fb;white-space:pre-wrap">${esc(body)}</textarea>
+    <div id="drMsg" class="muted" style="font-size:12.5px;min-height:18px;margin-top:6px"></div>
+    <div class="m-foot" style="display:flex;justify-content:flex-end;gap:8px;flex-wrap:wrap;margin-top:6px">
+      <button class="btn-ghost" id="drCancel">Cancel</button>
+      <button class="btn-ghost" id="drCopy">📋 Copy information</button>
+      <button class="btn-primary" id="drGen">✉️ Generate email</button>
+    </div>`, 640);
+  const msg=ov.querySelector('#drMsg');
+  const copyText=async t=>{ try{ await navigator.clipboard.writeText(t); return true; }catch(e){
+      const ta=document.createElement('textarea'); ta.value=t; ta.style.cssText='position:fixed;left:-9999px'; document.body.appendChild(ta); ta.select();
+      let ok=false; try{ ok=document.execCommand('copy'); }catch(e2){} ta.remove(); return ok; } };
+  const toVal=()=>ov.querySelector('#drTo').value.trim();
+  ov.querySelectorAll('[data-cp]').forEach(b=>b.onclick=async()=>{ const el=ov.querySelector('#'+b.dataset.cp); const ok=await copyText(el.value);
+    b.textContent=ok?'✓ Copied':'Copy failed'; setTimeout(()=>{ b.textContent='Copy'; },1600); if(!ok){ el.focus(); el.select(); } });
+  let acted=false, reloaded=false;
+  const reload=()=>{ if(reloaded) return; reloaded=true; openOrder(o.id); };
+  const finish=()=>{ ov.remove(); if(acted) reload(); };
+  ov.querySelector('#drCancel').onclick=finish;
+  ov.querySelector('#drCopy').onclick=async()=>{
+    const all=`To: ${toVal()}\nSubject: ${subject}\n\n${body}`;
+    const ok=await copyText(all);
+    if(!ok){ msg.style.color='#c0392b'; msg.textContent='Your browser blocked copying — use the Copy buttons next to each field, or select the text and press Ctrl+C.'; return; }
+    if(!await markRequested()){ ov.remove(); return; } acted=true;
+    msg.style.color='#1d7a4a'; msg.innerHTML='✓ Copied the recipient, subject and body. Open your email app, start a new email and paste. The order is now at the DEA 222 step. <a href="#" id="drClose">Close</a>';
+    const cl=ov.querySelector('#drClose'); if(cl) cl.onclick=e=>{ e.preventDefault(); finish(); };
+    toast('Email information copied. Order moved to DEA 222 step.'); };
+  ov.querySelector('#drGen').onclick=async()=>{
+    const href=`mailto:${encodeURIComponent(toVal())}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const a=document.createElement('a'); a.href=href; a.target='_blank'; document.body.appendChild(a); a.click(); a.remove();
+    if(!await markRequested()){ ov.remove(); return; } acted=true;
+    ov.remove(); toast('DEA 222 request email opened. Order moved to DEA 222 step. If your email app didn’t open, use Resend 222 request → Copy information.'); reload(); };
+  // closing with ✕ after copying still refreshes the order
+  const mo=new MutationObserver(()=>{ if(!document.body.contains(ov)){ mo.disconnect(); if(acted) reload(); } }); mo.observe(document.body,{childList:true,subtree:true});
 }
 
 // ---- Inline shipment preparation (replaces the old Mark Shipped popup) ------
