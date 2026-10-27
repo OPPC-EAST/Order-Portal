@@ -4657,16 +4657,39 @@ function orgModal(o){
     <div class="mrow"><div class="mfld"><label>Avatar color</label><input id="o_color" type="color" value="${o.color||'#0e7c86'}" style="height:40px;padding:3px"></div>
       <div class="mfld"><label>Status</label><select id="o_cs"><option value="live" ${!o.coming_soon?'selected':''}>Live</option><option value="soon" ${o.coming_soon?'selected':''}>Coming soon</option></select></div></div>
     <div class="mfld"><label>Logo URL (optional)</label><input id="o_logo" value="${esc(o.logo_url||'')}" placeholder="https://…"></div>
-    <div class="m-foot"><button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,480);
+    ${isNew?'':`<div style="font-size:13px;font-weight:700;color:var(--ink);margin-top:14px">Hospice login password</div>
+    <div class="muted" style="font-size:12px;margin:2px 0 6px">The main sign-in password for this organization’s hospice login. Care center passwords are set on each facility.</div>
+    <div id="o_logins" class="muted" style="font-size:12px;margin-bottom:6px">Loading logins…</div>
+    <div class="mrow"><div class="mfld"><label>New password</label><input id="o_pw" type="password" autocomplete="new-password" placeholder="Leave blank to keep the current password"></div>
+      <div class="mfld"><label>Confirm new password</label><input id="o_pw2" type="password" autocomplete="new-password"></div></div>
+    <label style="display:flex;align-items:center;gap:6px;font-size:12px;margin-top:-4px"><input type="checkbox" id="o_pwshow"> Show passwords</label>`}
+    <div class="m-foot"><button class="btn-ghost" data-x>Cancel</button><button class="btn-primary" data-ok>${isNew?'Add':'Save'}</button></div>`,520);
+  if(!isNew){
+    const sh=ov.querySelector('#o_pwshow'); if(sh) sh.onchange=()=>{ ['#o_pw','#o_pw2'].forEach(q=>{ ov.querySelector(q).type=sh.checked?'text':'password'; }); };
+    db.rpc('org_login_emails',{ org:o.id }).then(({data,error})=>{ const el=ov.querySelector('#o_logins'); if(!el) return;
+      if(error){ el.innerHTML='Run <b>64_org_login_password.sql</b> in Supabase to change this password from here.'; ['#o_pw','#o_pw2'].forEach(q=>{ const i=ov.querySelector(q); if(i) i.disabled=true; }); return; }
+      const em=(data||[]).map(r=>r.email); el.innerHTML=em.length?('Login'+(em.length>1?'s':'')+': <b>'+em.map(esc).join('</b>, <b>')+'</b>'):'No hospice logins are linked to this organization yet.'; });
+  }
   ov.querySelector('[data-x]').onclick=()=>ov.remove();
   ov.querySelector('[data-ok]').onclick=async()=>{
     const name=$('#o_name').value.trim(); if(!name) return toast('Name required.');
     const rec={ name, color:$('#o_color').value, coming_soon:$('#o_cs').value==='soon', logo_url:$('#o_logo').value.trim()||null };
+    const pw=isNew?'':(($('#o_pw')||{}).value||''), pw2=isNew?'':(($('#o_pw2')||{}).value||'');
+    if(pw||pw2){
+      if(pw!==pw2) return toast('The two passwords don’t match.', true);
+      if(pw.length<8) return toast('Use at least 8 characters for the password.', true);
+      const who=(ov.querySelector('#o_logins')||{}).textContent||'';
+      if(!await uiConfirm(`Change the hospice login password for <b>${esc(name)}</b>?<br><span class="muted" style="font-size:12.5px">${esc(who)}<br>Everyone using this login will need the new password the next time they sign in.</span>`,{title:'Change login password',okText:'Change password'})) return;
+    }
     let error;
     if(isNew){ const id=slug('',name,x=>FAC_ORGS.some(g=>g.id===x)); ({error}=await db.from('organizations').insert({id,...rec})); }
     else ({error}=await db.from('organizations').update(rec).eq('id',o.id));
     if(error) return toast('Error: '+error.message);
-    ov.remove(); toast('Saved.'); renderFacilities($('#staffBody'));
+    if(pw){ const { data:n, error:pe }=await db.rpc('set_org_login_password',{ org:o.id, pw });
+      if(pe) return toast('Organization saved, but the password was not changed: '+pe.message, true);
+      toast('Saved. Login password changed for '+(n||0)+' login'+(n===1?'':'s')+'.'); }
+    else toast('Saved.');
+    ov.remove(); renderFacilities($('#staffBody'));
   };
 }
 async function centerModal(c, presetOrg){
