@@ -614,6 +614,14 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
       </div>
     </label>
     <button class="btn-dark" id="li-go" style="width:100%;margin-top:10px;padding:12px">Sign in</button>
+    <div style="text-align:right;margin-top:8px"><a href="#" id="li-forgot" style="color:var(--brand);font-size:12.5px;font-weight:600;text-decoration:none">Forgot password?</a></div>
+    <div id="li-forgotbox" class="hidden" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fafbfc">
+      <div style="font-size:13px;font-weight:700;margin-bottom:4px">Reset your password</div>
+      <div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:8px">Pharmacy staff: enter your sign-in email. We’ll send a reset link to the recovery email linked to that account.</div>
+      <input id="li-femail" type="email" placeholder="you@example.com" style="width:100%">
+      <div style="display:flex;gap:8px;margin-top:8px"><button class="btn-dark" id="li-fsend" style="flex:1;padding:10px">Send reset link</button><button class="btn-ghost" id="li-fcancel" type="button">Cancel</button></div>
+      <div id="li-fmsg" style="font-size:12.5px;margin-top:8px"></div>
+    </div>
     <div id="li-err" class="err hidden"></div>
     <div id="li-note" class="hidden" style="color:var(--brand-dk);background:#fff4f7;border:1px solid #f2b8c4;border-radius:8px;padding:9px 11px;font-size:13px;margin-top:10px"></div>
   </div>
@@ -652,7 +660,9 @@ const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON, {
     storage: window.sessionStorage,
     storageKey: 'oppc-portal-auth',
     persistSession: true,
-    autoRefreshToken: true
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+    flowType: 'implicit'      // password-reset links open in a new tab, so no stored PKCE verifier is needed
   }
 });
 // Password to open the management tabs (Facilities, Formulary, Omnicell NDCs, Reports).
@@ -808,6 +818,10 @@ function promptResumeCart(ts){
 const HB_KEY='oppc-portal-hb', HB_MAX=10*60*1000;
 function beat(){ try{ sessionStorage.setItem(HB_KEY, String(Date.now())); }catch(e){} }
 async function boot(){
+  const RECOVERY=/type=recovery/.test(location.hash||'');
+  if(RECOVERY){ beat(); const { data:{ session:rs } }=await db.auth.getSession(); if(rs){ showRecoveryScreen(); return; } }
+  if(/error_description=/.test(location.hash||'')){ const d=decodeURIComponent(((location.hash.match(/error_description=([^&]+)/)||[])[1]||'').replace(/\+/g,' ')); history.replaceState(null,'',location.pathname); PENDING_LOGIN_MSG='That reset link is invalid or has expired ('+d+'). Use “Forgot password?” to get a new one.'; }
+  if(sessionStorage.getItem('oppc-pw-reset')){ sessionStorage.removeItem('oppc-pw-reset'); PENDING_LOGIN_MSG='Your password was changed. Sign in with your new password.'; }
   { let last=0; try{ last=+sessionStorage.getItem(HB_KEY)||0; }catch(e){}
     const { data:{ session:s0 } } = await db.auth.getSession();
     if(s0 && (!last || Date.now()-last>HB_MAX)){ try{ await db.auth.signOut({ scope:'local' }); }catch(e){} try{ sessionStorage.removeItem('oppc-portal-auth'); }catch(e){} } }
@@ -818,7 +832,9 @@ async function boot(){
   db.auth.onAuthStateChange((_e, s)=>{ if(!s && !IDLE_OUT){ showLogin(); } });
 }
 
+let PENDING_LOGIN_MSG='';
 function showLogin(msg){
+  if(!msg && PENDING_LOGIN_MSG){ msg=PENDING_LOGIN_MSG; } PENDING_LOGIN_MSG='';
   clearIdle();
   $('#view-app').classList.add('hidden');
   $('#view-login').classList.remove('hidden');
@@ -829,13 +845,52 @@ function showLogin(msg){
   }
 }
 
+// Typed address → real login email (handles the old address after a recovery email is linked).
+async function resolveLoginEmail(e){ try{ const { data }=await db.rpc('resolve_login_email',{ e }); return (data||e).trim(); }catch(x){ return e; } }
+async function sendResetLink(){
+  const msg=$('#li-fmsg'), btn=$('#li-fsend'); const typed=$('#li-femail').value.trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(typed)){ msg.style.color='#c0392b'; msg.textContent='Enter your sign-in email.'; return; }
+  btn.disabled=true; msg.style.color=''; msg.textContent='Sending…';
+  const email=await resolveLoginEmail(typed);
+  const redirectTo=location.origin+location.pathname;
+  const { error }=await db.auth.resetPasswordForEmail(email,{ redirectTo });
+  btn.disabled=false;
+  if(error && /rate|seconds|too many/i.test(error.message)){ msg.style.color='#c0392b'; msg.textContent='Please wait a minute before requesting another link.'; return; }
+  // same answer either way, so the screen never reveals which addresses have accounts
+  msg.style.color='#1d7a4a'; msg.textContent='If that email belongs to a pharmacy account with a linked recovery email, a reset link is on its way. Check the inbox (and spam) and follow the link within an hour.';
+}
+function showRecoveryScreen(){
+  $('#view-app').classList.add('hidden'); $('#view-login').classList.remove('hidden');
+  const card=$('#view-login .login-card');
+  card.innerHTML=`<img class="brand-logo" src="${LOGO_SRC}" alt="OnePoint Patient Care">
+    <h1>Create a new password</h1>
+    <div class="muted" style="font-size:13.5px;line-height:1.5">Choose a new password for your pharmacy account. Use at least 8 characters with letters, numbers and a symbol.</div>
+    <label class="fld"><span>New password</span><input id="rp-1" type="password" autocomplete="new-password"></label>
+    <label class="fld"><span>Confirm new password</span><input id="rp-2" type="password" autocomplete="new-password"></label>
+    <label style="display:flex;gap:6px;align-items:center;font-size:12.5px;margin-top:6px"><input type="checkbox" id="rp-show"> Show passwords</label>
+    <button class="btn-dark" id="rp-go" style="width:100%;margin-top:12px;padding:12px">Save new password</button>
+    <div id="rp-msg" style="font-size:13px;margin-top:10px"></div>`;
+  $('#rp-show').onchange=e=>{ ['#rp-1','#rp-2'].forEach(q=>$(q).type=e.target.checked?'text':'password'); };
+  $('#rp-go').onclick=async()=>{ const a=$('#rp-1').value, b=$('#rp-2').value, m=$('#rp-msg');
+    const bad=pwProblem(a); if(bad){ m.style.color='#c0392b'; m.textContent=bad; return; }
+    if(a!==b){ m.style.color='#c0392b'; m.textContent='The two passwords don’t match.'; return; }
+    $('#rp-go').disabled=true; const { error }=await db.auth.updateUser({ password:a }); $('#rp-go').disabled=false;
+    if(error){ m.style.color='#c0392b'; m.textContent='Could not save the password: '+error.message+' — the link may have expired; request a new one.'; return; }
+    try{ await db.auth.signOut({ scope:'local' }); }catch(e){}
+    sessionStorage.setItem('oppc-pw-reset','1'); history.replaceState(null,'',location.pathname); location.reload(); };
+}
+function pwProblem(p){
+  if(!p || p.length<8) return 'Use at least 8 characters.';
+  if(!/[A-Za-z]/.test(p) || !/\d/.test(p) || !/[^A-Za-z0-9]/.test(p)) return 'Include letters, at least one number, and at least one symbol.';
+  return '';
+}
 async function doLogin(){
   const email=$('#li-email').value.trim(), pw=$('#li-pw').value;
   $('#li-err').classList.add('hidden');
   { const note=$('#li-note'); if(note) note.classList.add('hidden'); }
   if(!email||!pw){ return showErr('Enter your email and password.'); }
   $('#li-go').textContent='Signing in…'; $('#li-go').disabled=true;
-  const { data, error } = await db.auth.signInWithPassword({ email, password:pw });
+  const { data, error } = await db.auth.signInWithPassword({ email:await resolveLoginEmail(email), password:pw });
   $('#li-go').textContent='Sign in'; $('#li-go').disabled=false;
   if(error){ return showErr(error.message); }
   await afterLogin(data.session);
@@ -4587,8 +4642,55 @@ async function fulfillmentReminder(){
 // ADMIN SCREENS (Phase 3)
 // ===========================================================================
 let FAC_ORGS=[], FAC_CCS=[], openOrgIds=new Set(), FAC_LOCKS=null;   // FAC_LOCKS null = password feature not set up yet
+// Facilities → Pharmacy account: change your password and link the recovery email used by "Forgot password?".
+async function drawPharmacyAccount(){
+  const box=$('#pharmAcct'); if(!box) return;
+  let info={ email:ME.email, aliases:[] }, ready=true;
+  try{ const { data, error }=await db.rpc('my_login_info'); if(error) ready=false; else if(data&&data[0]) info=data[0]; }catch(e){ ready=false; }
+  const aliases=(info.aliases||[]).filter(Boolean);
+  box.innerHTML=`<div class="card" style="padding:16px 18px;margin:6px 0 16px">
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:15px">🔐 Pharmacy account</b><span class="muted" style="font-size:12.5px">Signed in as <b>${esc(info.email||'')}</b>${aliases.length?' · also signs in with '+aliases.map(a=>'<b>'+esc(a)+'</b>').join(', '):''}</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-top:12px">
+      <div><div style="font-size:13px;font-weight:700;margin-bottom:6px">Change password</div>
+        <input id="pa-cur" type="password" placeholder="Current password" autocomplete="current-password" style="width:100%;margin-bottom:6px">
+        <input id="pa-new" type="password" placeholder="New password" autocomplete="new-password" style="width:100%;margin-bottom:6px">
+        <input id="pa-new2" type="password" placeholder="Confirm new password" autocomplete="new-password" style="width:100%">
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px"><label style="font-size:12px;display:flex;gap:5px;align-items:center"><input type="checkbox" id="pa-show"> Show</label><span class="spacer" style="flex:1"></span><button class="btn-primary btn-sm" id="pa-save">Change password</button></div>
+        <div class="muted" style="font-size:11.5px;margin-top:4px">At least 8 characters, with letters, a number and a symbol. Changes the password for everyone using this login.</div>
+        <div id="pa-msg" style="font-size:12.5px;margin-top:6px"></div></div>
+      <div><div style="font-size:13px;font-weight:700;margin-bottom:6px">Recovery email</div>
+        ${ready?`<div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:6px">“Forgot password?” sends the reset link to this address. ${aliases.length?'Currently linked: <b>'+esc(info.email||'')+'</b>.':'No recovery email linked yet — reset links would go to <b>'+esc(info.email||'')+'</b>.'}</div>
+        <input id="pa-rec" type="email" placeholder="designated-mailbox@yourdomain.com" style="width:100%">
+        <div style="display:flex;justify-content:flex-end;margin-top:8px"><button class="btn-ghost btn-sm" id="pa-link">Link email</button></div>
+        <div class="muted" style="font-size:11.5px;margin-top:4px">Staff can keep signing in with ${esc(aliases[0]||info.email||'the current address')}.</div>
+        <div id="pa-rmsg" style="font-size:12.5px;margin-top:6px"></div>`
+        :'<div class="muted" style="font-size:12.5px">Run <b>65_pharmacy_password_recovery.sql</b> in Supabase to link a recovery email.</div>'}</div>
+    </div></div>`;
+  const sh=$('#pa-show'); sh.onchange=()=>['#pa-cur','#pa-new','#pa-new2'].forEach(q=>$(q).type=sh.checked?'text':'password');
+  $('#pa-save').onclick=async()=>{ const m=$('#pa-msg'); const cur=$('#pa-cur').value, a=$('#pa-new').value, b=$('#pa-new2').value;
+    const say=(t,ok)=>{ m.style.color=ok?'#1d7a4a':'#c0392b'; m.textContent=t; };
+    if(!cur) return say('Enter your current password.');
+    const bad=pwProblem(a); if(bad) return say(bad);
+    if(a!==b) return say('The new passwords don’t match.');
+    if(a===cur) return say('The new password must be different from the current one.');
+    $('#pa-save').disabled=true;
+    const { error:e1 }=await db.auth.signInWithPassword({ email:info.email||ME.email, password:cur });   // confirm current password
+    if(e1){ $('#pa-save').disabled=false; return say('Current password is incorrect.'); }
+    const { error:e2 }=await db.auth.updateUser({ password:a });
+    $('#pa-save').disabled=false;
+    if(e2) return say('Could not change the password: '+e2.message);
+    ['#pa-cur','#pa-new','#pa-new2'].forEach(q=>$(q).value='');
+    say('✓ Password changed. Use the new password next time you sign in.', true); };
+  const lk=$('#pa-link'); if(lk) lk.onclick=async()=>{ const m=$('#pa-rmsg'); const v=$('#pa-rec').value.trim();
+    const say=(t,ok)=>{ m.style.color=ok?'#1d7a4a':'#c0392b'; m.textContent=t; };
+    if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) return say('Enter a valid email address.');
+    if(!await uiConfirm(`Link <b>${esc(v)}</b> as the recovery email for this pharmacy login?<br><span class="muted" style="font-size:12.5px">Password reset links will be sent there. Staff can keep signing in with <b>${esc(aliases[0]||info.email||'')}</b>.</span>`,{title:'Link recovery email',okText:'Link email'})) return;
+    const { error }=await db.rpc('link_recovery_email',{ new_email:v });
+    if(error) return say('Could not link: '+error.message);
+    say('✓ Recovery email linked.', true); setTimeout(drawPharmacyAccount, 900); };
+}
 async function renderFacilities(host){
-  host.innerHTML='<div class="section-head" style="margin-top:6px"><h2 style="font-size:19px">Organizations &amp; facilities</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="addOrg">＋ Add organization</button></div><div class="muted" style="font-size:12.5px;margin:-8px 0 8px">Click an organization to expand its care centers.</div><div id="orgAcc"><div class="empty">Loading…</div></div><div id="inactiveFac"></div>';
+  host.innerHTML='<div id="pharmAcct"></div><div class="section-head" style="margin-top:6px"><h2 style="font-size:19px">Organizations &amp; facilities</h2><span class="spacer"></span><button class="btn-primary btn-sm" id="addOrg">＋ Add organization</button></div><div class="muted" style="font-size:12.5px;margin:-8px 0 8px">Click an organization to expand its care centers.</div><div id="orgAcc"><div class="empty">Loading…</div></div><div id="inactiveFac"></div>';
   $('#addOrg').onclick=()=>orgModal(null);
   const [{data:orgs},{data:ccs}] = await Promise.all([
     db.from('organizations').select('*').order('name'),
@@ -4597,7 +4699,7 @@ async function renderFacilities(host){
   FAC_ORGS=orgs||[]; FAC_CCS=ccs||[];
   { const { data:lk, error:le }=await db.from('care_center_locks').select('care_center_id,enabled,pw_hash');
     FAC_LOCKS = le ? null : Object.fromEntries((lk||[]).map(r=>[r.care_center_id,{ enabled:!!r.enabled, hasPw:!!r.pw_hash }])); }
-  drawFacilities();
+  drawFacilities(); drawPharmacyAccount();
 }
 function drawFacilities(){
   const host=$('#orgAcc'); if(!host) return;
@@ -5648,6 +5750,9 @@ function subscribeRealtime(){
 // ---- go --------------------------------------------------------------------
 ['#li-logo','#tb-logo'].forEach(s=>{ const e=$(s); if(e) e.src=LOGO_SRC; });
 $('#li-go').onclick=doLogin;
+$('#li-forgot').onclick=e=>{ e.preventDefault(); $('#li-forgotbox').classList.remove('hidden'); $('#li-femail').value=$('#li-email').value; $('#li-fmsg').textContent=''; $('#li-femail').focus(); };
+$('#li-fcancel').onclick=()=>$('#li-forgotbox').classList.add('hidden');
+$('#li-fsend').onclick=sendResetLink;
 $('#li-show').onclick=()=>{ const i=$('#li-pw'), sh=i.type==='password'; i.type=sh?'text':'password'; $('#li-show').textContent=sh?'Hide':'Show'; };
 $('#li-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
 boot();
