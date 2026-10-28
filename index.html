@@ -3891,7 +3891,7 @@ function drawQueueGroups(){
       <span style="display:flex;gap:8px;align-items:center">
         ${isDraft
           ? `<button class="btn-primary btn-sm" data-resume="${o.id}">Resume →</button><button class="btn-ghost btn-sm" data-discard="${o.id}" title="Cancel draft" style="color:#c0392b;border-color:#e0b4bc">Discard</button>`
-          : `${(['complete','cancelled'].includes(o.status) && cc.ordering_mode==='pharmacy')?`<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order for this facility with these items">🔁 Reorder</button>`:''}<button class="btn-ghost btn-sm" data-open="${o.id}">Open →</button>${isAdmin?`<button class="btn-ghost btn-sm" data-del="${o.id}" title="Delete order" style="color:#c0392b;border-color:#e0b4bc">🗑</button>`:''}`}
+          : `${(['complete','cancelled'].includes(o.status) && cc.ordering_mode==='pharmacy')?`<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order for this facility with these items">🔁 Reorder</button>`:''}<button class="btn-ghost btn-sm" data-open="${o.id}">Open →</button>${(isAdmin||o.status==='cancelled')?`<button class="btn-ghost btn-sm" data-del="${o.id}" title="Delete order permanently" style="color:#c0392b;border-color:#e0b4bc">🗑${o.status==='cancelled'?' Delete':''}</button>`:''}`}
       </span></div>`;
   };
   // top-level status tabs
@@ -3903,6 +3903,7 @@ function drawQueueGroups(){
   </div>`;
   // filter to current tab, then group by facility — only facilities with orders in this tab
   const filtered=orders.filter(o=>bucket(o)===QUEUE_TAB);
+  const bulkDel = (QUEUE_TAB==='canceled' && filtered.length) ? `<div style="display:flex;justify-content:flex-end;padding:10px 12px 0"><button class="btn-ghost btn-sm" id="delAllCanceled" style="color:#c0392b;border-color:#e0b4bc">🗑 Delete all canceled (${filtered.length})</button></div>` : '';
   const groups={};
   filtered.forEach(o=>{ const cc=o.care_centers||{}; const key=cc.name||'Unassigned facility';
     (groups[key]=groups[key]||{cc, items:[]}).items.push(o); });
@@ -3924,7 +3925,8 @@ function drawQueueGroups(){
       ${g.items.map(o=>rowHtml(o,cc)).join('')}</div>`;
   }).join('') : `<div class="card"><div class="empty" style="padding:40px 20px"><div class="big">📋</div>No ${QUEUE_TAB} orders.</div></div>`;
   const qt=$('#qTabs');
-  if(qt){ qt.innerHTML=tabbar; q.innerHTML=body; } else q.innerHTML = tabbar + body;
+  if(qt){ qt.innerHTML=tabbar; q.innerHTML=bulkDel+body; } else q.innerHTML = tabbar + bulkDel + body;
+  { const da=$('#delAllCanceled'); if(da) da.onclick=()=>deleteCanceledOrders(filtered.map(o=>o.id)); }
   (qt||q).querySelectorAll('.tabbar [data-qt]').forEach(t=>t.onclick=()=>{ QUEUE_TAB=t.dataset.qt; drawQueueGroups(); window.scrollTo({top:0}); });
   q.querySelectorAll('[data-del]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); deleteOrder(x.dataset.del); });
   q.querySelectorAll('[data-resume]').forEach(x=>x.onclick=e=>{ e.stopPropagation(); pharmacyResumeDraft(x.dataset.resume); });
@@ -4130,12 +4132,31 @@ async function pharmacySubmitFromCart(){
 }
 function schRankQ(s){ return s==='CII'?0 : (['CTRL','CIII','CIV','CV'].includes(s)?1:2); }
 
+// Remove orders together with their lines, history, fulfillment steps and shipment records.
+async function purgeOrders(ids){
+  for(const t of ['order_lines','order_events','fulfillment_steps','shipments']){
+    const { error }=await db.from(t).delete().in('order_id',ids);
+    if(error && !/does not exist|schema cache/i.test(error.message)) return error;
+  }
+  const { data, error }=await db.from('orders').delete().in('id',ids).select('id');
+  if(error) return error;
+  if(!data || data.length<ids.length) return { message:'the database did not allow deleting '+(ids.length-(data||[]).length)+' order(s) — your account may need delete permission on orders.' };
+  return null;
+}
+async function deleteCanceledOrders(ids){
+  if(!ids.length) return;
+  if(!await uiConfirm(`Permanently delete <b>${ids.length}</b> canceled order${ids.length!==1?'s':''}?<br><span class="muted" style="font-size:12.5px">This removes each order with its lines, history and shipment records. It cannot be undone. To keep one, open it and use <b>↺ Restore order</b> instead.</span>`,{title:'Delete canceled orders',okText:'Delete all',danger:true})) return;
+  const error=await purgeOrders(ids);
+  if(error){ toast('Delete failed: '+error.message, true); renderQueue($('#staffBody')); return; }
+  toast(ids.length+' canceled order'+(ids.length!==1?'s':'')+' deleted.');
+  if(QUEUE_ORDERS){ const k=new Set(ids); QUEUE_ORDERS=QUEUE_ORDERS.filter(x=>!k.has(x.id)); drawQueueGroups(); } else renderQueue($('#staffBody'));
+}
 async function deleteOrder(id){
   const { data:o } = await db.from('orders').select('order_no').eq('id',id).maybeSingle();
   const label=o?o.order_no:'this order';
   if(!await uiConfirm('Permanently delete <b>'+esc(label)+'</b>? This removes the order and all of its lines, events, and shipment records. This cannot be undone.',{title:'Delete order',okText:'Delete',danger:true})) return;
-  const { error } = await db.from('orders').delete().eq('id',id);
-  if(error){ toast('Delete failed: '+error.message); return; }
+  const error=await purgeOrders([id]);
+  if(error){ toast('Delete failed: '+error.message, true); return; }
   toast(label+' deleted.');
   if(ACTIVE_ORDER && ACTIVE_ORDER.id===id){ ACTIVE_ORDER=null; renderStaff(); }
   else if(QUEUE_ORDERS){ QUEUE_ORDERS=QUEUE_ORDERS.filter(x=>x.id!==id); drawQueueGroups(); }
@@ -4205,7 +4226,7 @@ async function openOrder(id){
     <div style="display:flex;align-items:center;gap:10px">
       <button class="btn-ghost btn-sm" id="back">← Back to queue</button>
       <span style="flex:1"></span>
-      ${ME.role==='admin'?`<button class="btn-ghost btn-sm" id="delOrder" style="color:#c0392b;border-color:#e0b4bc">🗑 Delete order</button>`:''}
+      ${(ME.role==='admin'||o.status==='cancelled')?`<button class="btn-ghost btn-sm" id="delOrder" style="color:#c0392b;border-color:#e0b4bc">🗑 Delete order</button>`:''}
     </div>
     <div style="display:flex;gap:16px;align-items:flex-start;margin-top:12px;flex-wrap:wrap">
     <div style="flex:1;min-width:min(560px,100%)">
