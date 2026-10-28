@@ -3042,6 +3042,15 @@ async function changeLineStrength(o, i){
   else toast('Strength changed to '+(pick.strength||'')+' — select the NDC for the new strength.');
   openOrder(o.id);
 }
+// ---- Restore a canceled order (pharmacy) ----
+// Undoes a cancel: same order number, items, quantities and NDCs; it restarts at Submitted so it goes
+// through the normal workflow again. Logged in the order history.
+async function restoreCanceledOrder(o){
+  if(!await uiConfirm(`Restore <b>${esc(o.order_no)}</b>?<br><span class="muted" style="font-size:12.5px">It goes back to <b>Submitted</b> with all of its items, quantities and NDCs, and continues through the normal steps from there.</span>`,{title:'Restore canceled order',okText:'Restore order'})) return;
+  if(!await guardedOrderUpdate(o, { status:'submitted', cancelled_at:null, canceled_by:null })) return;
+  await db.from('order_events').insert({ order_id:o.id, type:'restored', actor_id:ME.userId, actor_name:ME.fullName, note:'Canceled order restored to Submitted' });
+  toast(o.order_no+' restored to Submitted.'); openOrder(o.id);
+}
 // ---- Reorder a completed order ----
 // Loads the original order's items + requested quantities into a NEW cart (the original order is never
 // touched). The user can add/remove/adjust before submitting through the normal checkout, which creates
@@ -3572,7 +3581,7 @@ function drawMyOrders(){
       ${sh&&sh.shipped?`<div class="muted" style="font-size:12.5px;margin-top:10px">🚚 Shipped ${esc(sh.ship_date||'')}${(sh.tracking||[]).length?' · Track: '+fedexLinks(sh.tracking):''}${o.delivered?' · <b>Delivered</b>':''}</div>`:''}
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:14px">
         ${canCancel?`<button class="btn-ghost btn-sm" data-cancel="${o.id}" style="color:#c0392b;border-color:#e0b4bc">🗑 Cancel order</button>`:''}
-        ${(o.status==='complete' && CURRENT_CC && CURRENT_CC.ordering_mode!=='pharmacy') ? `<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order with these items — you can add, remove, and change quantities before submitting">🔁 Reorder</button>`:''}
+        ${(['complete','cancelled'].includes(o.status) && CURRENT_CC && CURRENT_CC.ordering_mode!=='pharmacy') ? `<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order with these items — you can add, remove, and change quantities before submitting">🔁 Reorder</button>`:''}
         ${MULTI_CC && o.status!=='cancelled' && CURRENT_CC && CURRENT_CC.allow_copy ? `<button class="btn-ghost btn-sm" data-copyto="${o.id}" style="color:var(--brand);border-color:#cfe0f2">📋 Copy to other units</button>`:''}
         <span style="flex:1"></span>
         ${needCcApprove?'':`<button class="btn-ghost btn-sm" data-print="${o.id}" style="color:var(--brand);border-color:#e0b4bc">🖨 Re-print order request</button>`}
@@ -3882,7 +3891,7 @@ function drawQueueGroups(){
       <span style="display:flex;gap:8px;align-items:center">
         ${isDraft
           ? `<button class="btn-primary btn-sm" data-resume="${o.id}">Resume →</button><button class="btn-ghost btn-sm" data-discard="${o.id}" title="Cancel draft" style="color:#c0392b;border-color:#e0b4bc">Discard</button>`
-          : `${(o.status==='complete' && cc.ordering_mode==='pharmacy')?`<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order for this facility with these items">🔁 Reorder</button>`:''}<button class="btn-ghost btn-sm" data-open="${o.id}">Open →</button>${isAdmin?`<button class="btn-ghost btn-sm" data-del="${o.id}" title="Delete order" style="color:#c0392b;border-color:#e0b4bc">🗑</button>`:''}`}
+          : `${(['complete','cancelled'].includes(o.status) && cc.ordering_mode==='pharmacy')?`<button class="btn-ghost btn-sm" data-reorder="${o.id}" title="Start a new order for this facility with these items">🔁 Reorder</button>`:''}<button class="btn-ghost btn-sm" data-open="${o.id}">Open →</button>${isAdmin?`<button class="btn-ghost btn-sm" data-del="${o.id}" title="Delete order" style="color:#c0392b;border-color:#e0b4bc">🗑</button>`:''}`}
       </span></div>`;
   };
   // top-level status tabs
@@ -4357,7 +4366,8 @@ function renderPharmActions(o){
   if(approvedPlus && o.has_c2) mid.push(`<button class="btn-ghost btn-sm" data-doc="dea" style="color:var(--c2);border-color:#d9b3bb">◆ DEA 222</button>`);
   if(['shipped','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-doc="fedexpod" style="color:#4d148c;border-color:#d9c9ee">📦 FedEx proof of delivery</button>`);
   if(['shipped','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-doc="pod">🖨 Delivery confirmation</button>`);
-  if(o.status==='complete' && (o.care_centers||{}).ordering_mode==='pharmacy') mid.push(`<button class="btn-ghost btn-sm" data-reorderorder title="Start a new order for this facility with these items. This order stays as it is.">🔁 Reorder</button>`);
+  if(o.status==='cancelled') left.push(`<button class="btn-ghost btn-sm" data-restore style="color:#12876a;border-color:#9ed3bf" title="Undo the cancel: the order goes back to Submitted with all its items, quantities and NDCs">↺ Restore order</button>`);
+  if(['complete','cancelled'].includes(o.status) && (o.care_centers||{}).ordering_mode==='pharmacy') mid.push(`<button class="btn-ghost btn-sm" data-reorderorder title="Start a new order for this facility with these items. This order stays as it is.">🔁 Reorder</button>`);
   if(o.created_by_pharmacy && ['submitted','review'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-editsubmitted title="Return to the order builder to add items that were missed. Existing items and details are kept.">← Back to order builder</button>`);
   if(o.created_by_pharmacy && !['cancelled','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-approvalemail style="color:var(--brand);border-color:#e0b4bc">📄 Approval packet / email</button>`);
   if(!['submitted','cancelled','complete'].includes(o.status)) mid.push(`<button class="btn-ghost btn-sm" data-back>← Back a step</button>`);
@@ -4391,6 +4401,7 @@ function renderPharmActions(o){
   const ae=host.querySelector('[data-approvalemail]'); if(ae) ae.onclick=()=>sendApprovalEmail(o);
   const es=host.querySelector('[data-editsubmitted]'); if(es) es.onclick=()=>pharmacyEditSubmitted(o.id);
   const ro=host.querySelector('[data-reorderorder]'); if(ro) ro.onclick=()=>pharmacyReorder(o.id);
+  const rs=host.querySelector('[data-restore]'); if(rs) rs.onclick=()=>restoreCanceledOrder(o);
   const r2=host.querySelector('[data-req222]'); if(r2) r2.onclick=()=>requestDea222(o);
   const sh=host.querySelector('[data-ship]'); if(sh) sh.onclick=()=>markShipped(o);
   const bk=host.querySelector('[data-back]'); if(bk) bk.onclick=()=>stepBack(o);
