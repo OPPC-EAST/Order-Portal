@@ -2128,13 +2128,17 @@ async function pharmacyPacketModal(orderId, orderNo, pEmail, subject, body){
 // ---- fulfillment tracker (pharmacy-only) -----------------------------------
 const FULFILL_STEPS=[{k:'placed',l:'Orders Placed'},{k:'received',l:'Orders Received'},{k:'typed',l:'Typed'},{k:'initialed',l:'Initialed'},{k:'printed',l:'Printed'},{k:'filled',l:'Filled'},{k:'finaled',l:'Finaled'},{k:'tracking',l:"FedEx Tracking #'s Received from Delivery"}];
 async function fetchFulfill(orderId){ const { data }=await db.from('fulfillment_steps').select('*').eq('order_id',orderId); const map={}; (data||[]).forEach(r=>map[r.step_key]=r); return map; }
+// Lines that still need an NDC (lines approved at 0 aren't filled, so they don't count).
+function linesMissingNdc(o){ return (o.order_lines||[]).filter(l=>!(l.ndc||'').trim() && !(l.approved_qty!=null && +l.approved_qty===0)); }
 function fulfillmentPanel(o){
   const f=o._fulfill||{};
+  const ndcMissing=linesMissingNdc(o).length;
   const done=FULFILL_STEPS.filter(s=>f[s.k]&&f[s.k].done).length;
   const firstPending=FULFILL_STEPS.findIndex(s=>!(f[s.k]&&f[s.k].done));
   const rows=FULFILL_STEPS.map((s,i)=>{ const st=f[s.k]; const on=!!(st&&st.done); const isNext=(i===firstPending);
     const stamp = on ? ('✓ '+((st.by_initials?st.by_initials+' · ':'')+(st.done_at?new Date(st.done_at).toLocaleDateString():''))) : '';
-    return `<label class="frow${on?' done':''}${isNext?' nextstep':''}"><input type="checkbox" data-ff="${s.k}" ${on?'checked':''}><span class="num">${i+1}.</span><span class="lbl">${esc(s.l)}${isNext?' <span class="flashstep">◀ next</span>':''}</span><span class="stamp">${stamp}</span></label>`;
+    const lockNdc = s.k==='placed' && !on && ndcMissing>0;   // can't place orders until every line has an NDC
+    return `<label class="frow${on?' done':''}${isNext?' nextstep':''}"${lockNdc?` title="Add an NDC to every line first (${ndcMissing} missing)" style="opacity:.75;cursor:not-allowed"`:''}><input type="checkbox" data-ff="${s.k}" ${on?'checked':''}${lockNdc?' disabled':''}><span class="num">${i+1}.</span><span class="lbl">${esc(s.l)}${isNext?' <span class="flashstep">◀ next</span>':''}${lockNdc?`<div style="font-size:11px;color:#b4520a;font-weight:600;margin-top:2px">🔒 Add an NDC to every line first — ${ndcMissing} missing</div>`:''}</span><span class="stamp">${stamp}</span></label>`;
   }).join('');
   return `<div class="card" style="margin-top:16px;padding:14px 16px">
     <div style="display:flex;align-items:center;gap:10px"><b>🧾 Internal Fulfillment Tracker</b><span class="spacer"></span><span class="pill">${done}/${FULFILL_STEPS.length} complete</span></div>
@@ -2172,6 +2176,7 @@ function promptInitialsAndShipDate(label, curDate){
 function wireFulfillment(o){
   document.querySelectorAll('[data-ff]').forEach(cb=>cb.onchange=async()=>{
     const k=cb.dataset.ff, step=FULFILL_STEPS.find(s=>s.k===k);
+    if(cb.checked && k==='placed'){ const miss=linesMissingNdc(o).length; if(miss){ cb.checked=false; toast('Add an NDC to every line before marking Orders Placed ('+miss+' missing).', true); return; } }
     if(cb.checked){
       let ini='';
       if(k==='tracking'){
