@@ -4434,12 +4434,8 @@ function renderPharmActions(o){
 
 async function advance(o, to){
   if(to==='approved'){
-    const missing=(o.order_lines||[]).filter(l=>!(l.ndc||'').trim());
-    if(missing.length){
-      const bad=(o.order_lines||[]).map((l,i)=>!(l.ndc||'').trim()?document.querySelector(`input[data-ndc="${i}"]`):null).filter(Boolean);
-      flagInvalid(bad);
-      toast('Assign an NDC to every line before approving ('+missing.length+' still missing).', true); return;
-    }
+    // NDCs are no longer required to approve — lines without one can be filled in afterwards.
+    o._ndcMissing=(o.order_lines||[]).filter(l=>!(l.ndc||'').trim() && !(l.approved_qty!=null && +l.approved_qty===0)).length;
     for(const l of o.order_lines){ await db.from('order_lines').update({ approved_qty:l.approved_qty }).eq('id',l.id); }
   }
   const patch={ status:to };
@@ -4448,7 +4444,8 @@ async function advance(o, to){
   if(to==='complete' && o._shipment){ await db.from('shipments').update({ delivered_at:new Date().toISOString().slice(0,10) }).eq('order_id',o.id); }
   await db.from('order_events').insert({ order_id:o.id, type:to, actor_id:ME.userId, actor_name:ME.fullName });
   const msg={ review:'Marked as received.', approved:'Order approved.', ordered:'Wholesale order placed.', complete:'Order marked delivered & complete.' }[to]||'Updated.';
-  toast(msg); openOrder(o.id);
+  const ndcNote=(to==='approved' && o._ndcMissing) ? ' '+o._ndcMissing+' line'+(o._ndcMissing!==1?'s':'')+' still without an NDC — add '+(o._ndcMissing!==1?'them':'it')+' before placing the wholesale order.' : '';
+  toast(msg+ndcNote); openOrder(o.id);
 }
 
 async function stepBack(o){
