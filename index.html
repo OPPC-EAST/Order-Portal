@@ -1539,7 +1539,15 @@ function docCss(){ return `body{font-family:-apple-system,Segoe UI,Roboto,Arial,
    button{font-family:inherit;font-size:13px;font-weight:700;padding:9px 16px;border-radius:8px;border:1px solid #c8003a;background:#c8003a;color:#fff;cursor:pointer}
    button:disabled{background:#c9ced6;border-color:#c9ced6;color:#fff;cursor:not-allowed}
    .doclogo{height:42px;display:block;margin-bottom:8px}
-   @media print{ @page{ margin:0 } body{ -webkit-print-color-adjust:exact; print-color-adjust:exact } }`; }
+   /* Print: real page margins on EVERY page (so long tables don't run off the bottom of page 1 or start at the top
+      edge of page 2), rows never split across pages, and the column headings repeat on each new page. */
+   @media print{ @page{ size:letter; margin:.45in .4in .5in }
+     body{ -webkit-print-color-adjust:exact; print-color-adjust:exact }
+     .page{ padding:0 !important; width:auto !important; max-width:none !important; min-height:0 !important; margin:0 !important; box-shadow:none !important }
+     thead{ display:table-header-group } tfoot{ display:table-footer-group }
+     tr, td, th{ break-inside:avoid; page-break-inside:avoid }
+     .sign, .cols, .ack, .c2, .band{ break-inside:avoid; page-break-inside:avoid }
+     .band, .hd{ break-after:avoid; page-break-after:avoid } }`; }
 
 function wholesaleRequestDoc(o, rx){
   const cc=o.care_centers||{};
