@@ -189,6 +189,57 @@
   .ihelp>.tip b{color:#fff;font-weight:700}
   .ihelp:hover>.tip,.ihelp:focus>.tip{display:block}
   .ihelp>.tip::before{content:"";position:absolute;right:6px;top:-5px;border:5px solid transparent;border-bottom-color:#1f2430;border-top:0}
+
+  /* ============ OneConnectPoint look: Lato, light gray canvas, left icon rail, crimson + teal ============ */
+  :root{ --brand:#b31b3a; --brand-dk:#8f1530; --accent:#1d7f84; --bg:#f8f8f8; --line:#e2e2e2; --radius:6px; }
+  body{ font-family:Lato,'Segoe UI',Arial,sans-serif; background:var(--bg); color:#333 }
+  button, input, select, textarea{ font-family:inherit }
+  button{ border-radius:4px; font-weight:700 }
+  input, select{ border-radius:4px; border-color:#d6d6d6 }
+  input:focus, select:focus, textarea:focus{ outline:2px solid rgba(29,127,132,.25); border-color:#1d7f84 }
+  .card{ border-radius:6px; border-color:#e6e6e6; box-shadow:0 1px 2px rgba(0,0,0,.03) }
+  .btn-primary{ background:#b31b3a; border-color:#b31b3a }
+  .btn-primary:hover{ background:#8f1530; border-color:#8f1530; filter:none }
+  .btn-ghost{ border-color:#d6d6d6 }
+  a{ color:#1d7f84 }
+  .pill{ border-radius:4px }
+
+  /* left rail (replaces the dark top bar) */
+  #view-app{ padding-left:84px }
+  .topbar{ position:fixed; top:0; left:0; bottom:0; width:84px; background:#f2f2f2; color:#333; border-right:1px solid #e0e0e0; z-index:40 }
+  .topbar-inner{ height:100%; max-width:none; margin:0; padding:14px 8px 14px; flex-direction:column; align-items:stretch; gap:6px }
+  #tb-logo{ width:44px !important; height:44px !important; object-fit:cover; object-position:left center; margin:0 auto 10px; display:block; background:transparent; border-radius:0; padding:0 }
+  #cobrand-x{ display:none !important }
+  #org-logo{ width:44px !important; height:44px !important; object-fit:contain; margin:0 auto 8px; background:#fff; border-radius:6px; padding:3px }
+  #roleTag{ align-self:center; font-size:9.5px; padding:2px 6px; letter-spacing:.02em; text-align:center; margin-bottom:8px }
+  #whoName{ display:none }
+  #railNav .tabbar{ display:flex; flex-direction:column; gap:4px; border:none; margin:0; padding:0; overflow:visible }
+  #railNav .tab{ position:relative; display:flex; flex-direction:column; align-items:center; gap:4px; padding:10px 4px 8px; border:none; border-radius:6px; color:#555; font-size:10.5px; font-weight:400; line-height:1.15; text-align:center; cursor:pointer; white-space:normal }
+  #railNav .tab:hover{ background:#e7e7e7; color:#222 }
+  #railNav .tab.active{ background:#b31b3a; color:#fff; font-weight:700 }
+  #railNav .tab.active::after{ display:none }
+  #railNav .rail-lock{ position:absolute; top:4px; right:6px; font-size:9px }
+  #railNav .newpill{ position:absolute; top:2px; right:2px; font-size:9px; padding:1px 5px; border-radius:9px; background:#3fb8b3; color:#fff }
+  .rail-user{ align-self:center; width:38px; height:38px; border-radius:50%; border:1px solid #cfcfcf; background:#fff; color:#555; font-size:12.5px; font-weight:700; display:flex; align-items:center; justify-content:center; margin-top:6px }
+  .rail-user:empty{ display:none }
+  #signout{ align-self:center; display:flex; flex-direction:column; align-items:center; gap:2px; background:transparent !important; border:none !important; color:#666 !important; font-size:10.5px !important; font-weight:400 !important; padding:6px 4px !important }
+  #signout:hover{ color:#b31b3a !important }
+  .staffnav-sticky{ display:none; top:0 }
+  .ml-sticky{ top:0 }
+  .wrap{ max-width:1320px; padding:22px 28px 80px }
+
+  /* in-page tabs (care centers, queue status tabs, etc.) */
+  .tabbar .tab.active{ color:#b31b3a }
+
+  /* small screens: rail becomes a top bar again */
+  @media (max-width:760px){
+    #view-app{ padding-left:0 }
+    .topbar{ position:sticky; bottom:auto; width:auto; border-right:none; border-bottom:1px solid #e0e0e0 }
+    .topbar-inner{ flex-direction:row; align-items:center; padding:8px 10px; overflow-x:auto }
+    #railNav .tabbar{ flex-direction:row }
+    #railNav .tab{ min-width:72px }
+    #tb-logo{ margin:0 }
+  }
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" rel="stylesheet">
 </head>
@@ -652,9 +703,11 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
     <span id="cobrand-x" class="hidden" style="color:#9aa2ad;font-weight:600;font-size:15px">×</span>
     <img id="org-logo" class="brand-logo-sm hidden" alt="">
     <span id="roleTag" class="pill"></span>
+    <nav id="railNav" aria-label="Main"></nav>
     <span class="spacer"></span>
     <span id="whoName" class="whoami"></span>
-    <button class="btn-sm" id="signout" style="color:#fff;background:#d9534f;border:1px solid #c9302c;font-weight:600">Sign out</button>
+    <span id="railUser" class="rail-user" title=""></span>
+    <button class="btn-sm" id="signout" title="Sign out" style="color:#fff;background:#d9534f;border:1px solid #c9302c;font-weight:600"><svg class="so-ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><path d="M16 17l5-5-5-5"></path><path d="M21 12H9"></path></svg><span class="so-tx">Sign out</span></button>
   </div></div>
   <div class="wrap" id="appBody"></div>
 </div>
@@ -944,6 +997,7 @@ async function afterLogin(session){
   const rt = ME.isStaff ? 'Pharmacy Staff' : 'Hospice';
   $('#roleTag').textContent = rt;
   $('#whoName').textContent = ME.fullName;
+  { const ru=$('#railUser'); if(ru){ const src=(ME.fullName||ME.email||'').trim(); const parts=src.replace(/@.*/,'').split(/[\s._-]+/).filter(Boolean); ru.textContent=((parts[0]||'?')[0]+((parts[1]||'')[0]||'')).toUpperCase(); ru.title=ME.email||src; } }
   wireChrome();
 
   // Co-brand: show the hospice's logo next to OnePoint's for hospice users.
@@ -3844,12 +3898,20 @@ function slug(prefix,str,taken){ let base=(str||'').toLowerCase().replace(/[^a-z
 
 const PROTECTED_TABS=['facilities','reports'];
 let NEW_ORDER_COUNT=0;
+// Where page headers should stick: below the in-page staff nav when it's shown; at the very top when the
+// navigation lives in the left rail (desktop) — on small screens the top bar is sticky, so sit below it.
+function stickyTopBelowNav(nav){
+  if(nav && nav.offsetHeight) return (parseInt(getComputedStyle(nav).top)||0)+nav.offsetHeight;
+  const tb=document.querySelector('.topbar'); if(tb && getComputedStyle(tb).position==='sticky') return tb.offsetHeight;
+  return 0;
+}
+const NAV_ICONS={"queue": "<path d=\"M4 4h16v12H4z\"></path><path d=\"M4 13h4l2 3h4l2-3h4\"></path>", "facilities": "<path d=\"M3 21h18\"></path><path d=\"M5 21V7l7-4 7 4v14\"></path><path d=\"M10 21v-5h4v5\"></path><path d=\"M12 8v4M10 10h4\"></path>", "formulary": "<rect x=\"3\" y=\"8\" width=\"18\" height=\"8\" rx=\"4\" transform=\"rotate(-35 12 12)\"></rect><path d=\"M9.5 8.5l5 7\"></path>", "ndc": "<path d=\"M8 6h13M8 12h13M8 18h13\"></path><path d=\"M3.5 6h.01M3.5 12h.01M3.5 18h.01\"></path>", "reports": "<path d=\"M4 20V10M10 20V4M16 20v-7M22 20H2\"></path>", "about": "<circle cx=\"12\" cy=\"12\" r=\"9\"></circle><path d=\"M12 11v6M12 7.5h.01\"></path>"};
 function staffNav(){
-  const tabs=[['queue','📥 Order Queue'],['facilities','🏥 Facilities'],['formulary','💊 Master List'],['ndc','🔖 Care Center Formulary'],['reports','📊 Reports'],['about','ℹ️ About & Compliance']];
+  const tabs=[['queue','Order Queue'],['facilities','Facilities'],['formulary','Master List'],['ndc','Care Center Formulary'],['reports','Reports'],['about','About & Compliance']];
   return `<div class="tabbar">${tabs.map(([k,l])=>{
-    const lock = PROTECTED_TABS.includes(k) && !ADMIN_UNLOCKED ? ' 🔒' : '';
-    const badge = k==='queue' && NEW_ORDER_COUNT>0 ? ` <span class="newpill">${NEW_ORDER_COUNT} new</span>` : '';
-    return `<div class="tab ${staffView===k?'active':''}" data-sv="${k}">${l}${lock}${badge}</div>`;
+    const lock = PROTECTED_TABS.includes(k) && !ADMIN_UNLOCKED ? '<span class="rail-lock" title="Password protected">🔒</span>' : '';
+    const badge = k==='queue' && NEW_ORDER_COUNT>0 ? `<span class="newpill">${NEW_ORDER_COUNT} new</span>` : '';
+    return `<div class="tab ${staffView===k?'active':''}" data-sv="${k}" title="${l}"><svg class="rail-ic" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${NAV_ICONS[k]}</svg><span class="rail-lb">${l}</span>${lock}${badge}</div>`;
   }).join('')}</div>`;
 }
 async function unlockAdminTabs(cb){
@@ -3869,8 +3931,9 @@ async function renderStaff(opts){
   const { count } = await db.from('orders').select('id',{count:'exact',head:true}).eq('status','submitted');
   NEW_ORDER_COUNT = count||0;
   const b=$('#appBody');
-  b.innerHTML = '<div class="staffnav-sticky">'+staffNav()+'</div><div id="staffBody"></div>';
-  b.querySelectorAll('[data-sv]').forEach(t=>t.onclick=async()=>{
+  b.innerHTML = '<div class="staffnav-sticky"></div><div id="staffBody"></div>';
+  const rail=$('#railNav'); if(rail) rail.innerHTML=staffNav();   // main navigation lives in the left rail
+  (rail||b).querySelectorAll('[data-sv]').forEach(t=>t.onclick=async()=>{
     const sv=t.dataset.sv;
     // Leaving a pharmacy build via the nav → persist the cart as a Draft once, silently.
     if(PHARM_BUILD){ clearTimeout(AUTOSAVE_T); try{ await pharmacyAutoSaveDraft(); }catch(e){} }
@@ -3893,7 +3956,7 @@ async function renderQueue(host){
   host.innerHTML='<div class="ml-sticky" id="qSticky"><div class="section-head" style="margin:0 0 10px"><h2 style="font-size:19px;margin:0">Order Queue</h2><span class="spacer"></span><button class="btn-ghost btn-sm" id="pharmFloor" style="margin-right:8px" title="Floor stock lists, fax forms, and floor stock orders">🧺 Floor stock</button><button class="btn-primary btn-sm" id="pharmNewOrder">＋ Create order for a facility</button></div><div id="qTabs"></div></div><div class="card" id="queue"><div class="empty">Loading…</div></div>';
   // keep the Order Queue header + status tabs pinned right below the (already sticky) staff nav
   { const _nav=document.querySelector('.staffnav-sticky'), _qs=document.getElementById('qSticky');
-    if(_qs){ const navTop=_nav?(parseInt(getComputedStyle(_nav).top)||66):66, navH=_nav?_nav.offsetHeight:54; _qs.style.top=(navTop+navH)+'px'; } }
+    if(_qs){ _qs.style.top=stickyTopBelowNav(_nav)+'px'; } }
   { const nb=$('#pharmNewOrder'); if(nb) nb.onclick=()=>pharmacyOrderModal(); }
   { const fb=$('#pharmFloor'); if(fb) fb.onclick=()=>floorStockModal(); }
   const { data:orders, error } = await db.from('orders')
@@ -5003,7 +5066,7 @@ async function renderFormulary(host){
   host.innerHTML='<div class="ml-sticky" id="mlSticky"><div class="section-head" style="margin:0 0 10px"><h2 style="font-size:19px;margin:0;white-space:nowrap">Master List</h2><input id="fSearch" placeholder="Search drugs by name or strength…" style="flex:1;min-width:200px;max-width:480px"><select id="fSched" style="min-width:150px"><option value="all">All schedules</option><option value="c2">Schedule II</option><option value="c35">Schedule III–V</option><option value="nc">Non-controlled</option></select><button class="btn-primary btn-sm" id="addMed" style="white-space:nowrap">＋ Add drug</button></div><div id="mlToolbar"></div></div><div id="medTbl"><div class="empty">Loading…</div></div>';
   // stick the Master List header right below the (already sticky) staff nav
   const _nav=document.querySelector('.staffnav-sticky'); const _ms=document.getElementById('mlSticky');
-  if(_ms){ const navTop=_nav?(parseInt(getComputedStyle(_nav).top)||66):66; const navH=_nav?_nav.offsetHeight:54; _ms.style.top=(navTop+navH)+'px'; }
+  if(_ms){ _ms.style.top=stickyTopBelowNav(_nav)+'px'; }
   const [{ data }, { data:ccs }] = await Promise.all([
     db.from('medications').select('*').order('name'),
     db.from('care_centers').select('id,name').order('name')
@@ -5266,7 +5329,7 @@ async function renderNdcAdmin(host){
   host.innerHTML=`<div class="ml-sticky" id="ndcSticky"><div class="section-head" style="margin:0 0 8px"><h2 style="font-size:19px;margin:0">Care Center Formulary</h2><span class="spacer"></span><button class="btn-ghost btn-sm" id="ndcPrint" style="color:var(--brand);border-color:#e0b4bc">🖨 Print list</button><button class="btn-ghost btn-sm" id="ndcCross" style="color:var(--brand);border-color:#e0b4bc">🔎 Find a drug across all units</button><select id="ndcCc" style="min-width:240px"><option value="">Select a care center…</option>${NDC_CCS.map(c=>`<option value="${c.id}" ${c.id===NDC_CC?'selected':''}>${esc(c.name)}</option>`).join('')}</select></div><div id="ndcCtl"></div></div><div id="ndcBody"><div class="empty">Choose a care center to view its formulary — or use “Find a drug across all units” to manage one drug across every care center at once.</div></div>`;
   // keep the header, search and bulk controls pinned under the (already sticky) staff nav
   { const _nav=document.querySelector('.staffnav-sticky'), _s=document.getElementById('ndcSticky');
-    if(_s){ const t=_nav?(parseInt(getComputedStyle(_nav).top)||66):66, h=_nav?_nav.offsetHeight:54; _s.style.top=(t+h)+'px'; } }
+    if(_s){ _s.style.top=stickyTopBelowNav(_nav)+'px'; } }
   $('#ndcCc').onchange=()=>{ NDC_CC=$('#ndcCc').value; NDC_SEARCH=''; drawNdc(NDC_CC); };
   $('#ndcCross').onclick=()=>crossUnitModal();
   $('#ndcPrint').onclick=()=>{ if(!NDC_CC) return toast('Select a care center first.', true); printCcFormulary(NDC_CC); };
@@ -5793,7 +5856,7 @@ function onOrderChanged(payload){
         try{ const { count }=await db.from('orders').select('id',{count:'exact',head:true}).eq('status','submitted'); NEW_ORDER_COUNT=count||0; }catch(e){}
         if(host){ await renderQueue(host); window.scrollTo(0,y); }
       } else {
-        try{ const { count }=await db.from('orders').select('id',{count:'exact',head:true}).eq('status','submitted'); NEW_ORDER_COUNT=count||0; const t=document.querySelector('.staffnav-sticky [data-sv="queue"]'); if(t){ let b=t.querySelector('.newpill'); if(NEW_ORDER_COUNT>0){ if(!b){ b=document.createElement('span'); b.className='newpill'; t.appendChild(document.createTextNode(' ')); t.appendChild(b); } b.textContent=NEW_ORDER_COUNT+' new'; } else if(b) b.remove(); } }catch(e){}
+        try{ const { count }=await db.from('orders').select('id',{count:'exact',head:true}).eq('status','submitted'); NEW_ORDER_COUNT=count||0; const t=document.querySelector('#railNav [data-sv="queue"]'); if(t){ let b=t.querySelector('.newpill'); if(NEW_ORDER_COUNT>0){ if(!b){ b=document.createElement('span'); b.className='newpill'; t.appendChild(document.createTextNode(' ')); t.appendChild(b); } b.textContent=NEW_ORDER_COUNT+' new'; } else if(b) b.remove(); } }catch(e){}
       }
     } else if(CURRENT_CC && hospTab==='mine' && document.getElementById('moList') && !document.querySelector('.modal-ov')){
       renderMyOrders();
@@ -5804,7 +5867,7 @@ function showStaleBanner(){
   if(document.getElementById('staleBanner')) return;
   const host=$('#staffBody')||$('#appBody'); if(!host) return;
   const d=document.createElement('div'); d.id='staleBanner';
-  d.style.cssText='position:sticky;top:120px;z-index:16;margin:8px 0;padding:10px 14px;border:1px solid #f0d9a8;background:#fff8e6;border-radius:9px;display:flex;align-items:center;gap:10px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.06)';
+  d.style.cssText='position:sticky;top:8px;z-index:16;margin:8px 0;padding:10px 14px;border:1px solid #f0d9a8;background:#fff8e6;border-radius:9px;display:flex;align-items:center;gap:10px;font-size:13px;box-shadow:0 4px 12px rgba(0,0,0,.06)';
   d.innerHTML='<span style="flex:1">↻ <b>This order was just updated by another user.</b> Reload to see the latest before making changes.</span><button class="btn-primary btn-sm" id="staleReload">Reload order</button>';
   host.insertBefore(d, host.firstChild);
   d.querySelector('#staleReload').onclick=()=>{ if(ACTIVE_ORDER) openOrder(ACTIVE_ORDER.id); };
