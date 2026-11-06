@@ -39,10 +39,28 @@
   .whoami{font-size:13px;color:#e5e7eb}
 
   /* login */
-  .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(900px 500px at 70% -10%,#f3d9e0,transparent),var(--bg);padding:20px}
-  .login-card{width:100%;max-width:400px;padding:28px 26px}
-  .login-card h1{font-size:21px;margin:4px 0 2px}
+  /* Sign-in page — styled to match OneConnectPoint (Lato, centered logo, square fields, crimson button) */
+  .login-shell{min-height:100vh;display:flex;align-items:center;justify-content:center;background:#ffffff;padding:24px;font-family:Lato,'Segoe UI',Arial,sans-serif}
+  .login-card{width:100%;max-width:340px;padding:8px 4px;border:none;box-shadow:none;background:transparent}
+  .login-card h1{font-size:20px;margin:4px 0 6px;font-weight:700;color:#3a3a3a}
   .brand-logo{height:48px;width:auto;display:block;margin:2px 0 16px}
+  #view-login .brand-logo{height:78px;margin:0 auto 6px}
+  #view-login .li-sub{text-align:center;color:#8a8a8a;font-size:14px;letter-spacing:.02em;margin:0 0 26px}
+  #view-login .fld{margin:0 0 18px}
+  #view-login .fld > span, #view-login .li-pwrow label{display:block;font-size:14px;font-weight:400;color:#7a7a7a;margin-bottom:6px}
+  #view-login .li-pwrow{display:flex;align-items:baseline;justify-content:space-between}
+  #view-login #li-forgot{color:#1d7f84;font-size:13px;text-decoration:underline;font-weight:400}
+  #view-login #li-forgot:hover{color:#145e62}
+  #view-login input{font-family:inherit;font-size:16px;border:1px solid #cfcfcf;border-radius:2px;padding:9px 11px;background:#fff;color:#333;box-shadow:none}
+  #view-login input:focus{border-color:#b31b3a;outline:2px solid rgba(179,27,58,.18);outline-offset:0}
+  #view-login #li-show{position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;color:#8a8a8a;padding:6px;width:auto;cursor:pointer;display:flex}
+  #view-login #li-show:hover, #view-login #li-show.on{color:#3a3a3a}
+  #view-login .li-signin, #view-login .btn-dark{background:#b31b3a;border:1px solid #b31b3a;border-radius:2px;color:#fff;font-family:inherit;font-weight:400;font-size:16px;letter-spacing:.01em}
+  #view-login .li-signin{width:100%;margin-top:6px;padding:12px}
+  #view-login .li-signin:hover, #view-login .btn-dark:hover{background:#94142f;border-color:#94142f}
+  #view-login .btn-ghost{border-radius:2px;font-family:inherit}
+  #view-login #li-forgotbox{border-radius:2px !important;border-color:#dcdcdc !important}
+  #view-login #li-note, #view-login .err{border-radius:2px}
   .brand-logo-sm{height:42px;width:auto;display:block;background:#fff;padding:6px 13px;border-radius:9px}
   .fld{display:block;margin:12px 0}
   .fld span{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:5px}
@@ -172,6 +190,7 @@
   .ihelp:hover>.tip,.ihelp:focus>.tip{display:block}
   .ihelp>.tip::before{content:"";position:absolute;right:6px;top:-5px;border:5px solid transparent;border-bottom-color:#1f2430;border-top:0}
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap" rel="stylesheet">
 </head>
 <body>
 <!-- PDF engine embedded locally (no external CDN) for the order-packet download -->
@@ -604,17 +623,16 @@ function(t){t.__bidiEngine__=t.prototype.__bidiEngine__=function(t){var r,n,i,a,
 <div id="view-login" class="login-shell">
   <div class="card login-card">
     <img id="li-logo" class="brand-logo" alt="OnePoint Patient Care">
-    <h1>Sign in to the portal</h1>
-    <div class="muted" style="font-size:13.5px;line-height:1.5">Enter your credentials to continue. Each hospice sees only its own formulary and orders.</div>
-    <label class="fld"><span>Email</span><input id="li-email" type="email" autocomplete="username" placeholder="you@example.com"></label>
-    <label class="fld"><span>Password</span>
+    <div class="li-sub">Hospice Ordering Portal</div>
+    <label class="fld"><span>Username</span><input id="li-email" type="email" autocomplete="username" placeholder="name@example.com"></label>
+    <div class="fld">
+      <div class="li-pwrow"><label for="li-pw">Password</label><a href="#" id="li-forgot">Forgot Password?</a></div>
       <div style="position:relative">
-        <input id="li-pw" type="password" autocomplete="current-password" placeholder="••••••••" style="width:100%;padding-right:58px">
-        <button type="button" id="li-show" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);border:none;background:none;color:var(--brand);font-weight:700;font-size:12.5px;padding:4px 8px;width:auto">Show</button>
+        <input id="li-pw" type="password" autocomplete="current-password" style="width:100%;padding-right:44px">
+        <button type="button" id="li-show" aria-label="Show password" title="Show password"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12z"></path><circle cx="12" cy="12" r="3"></circle></svg></button>
       </div>
-    </label>
-    <button class="btn-dark" id="li-go" style="width:100%;margin-top:10px;padding:12px">Sign in</button>
-    <div style="text-align:right;margin-top:8px"><a href="#" id="li-forgot" style="color:var(--brand);font-size:12.5px;font-weight:600;text-decoration:none">Forgot password?</a></div>
+    </div>
+    <button class="btn-dark li-signin" id="li-go">Sign In</button>
     <div id="li-forgotbox" class="hidden" style="margin-top:10px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#fafbfc">
       <div style="font-size:13px;font-weight:700;margin-bottom:4px">Reset your password</div>
       <div class="muted" style="font-size:12.5px;line-height:1.45;margin-bottom:8px">Pharmacy staff: enter <b>your own</b> pharmacy email (e.g. ppatel@oppc.com). We’ll email you a link to set a new password.</div>
@@ -5812,7 +5830,7 @@ $('#li-go').onclick=doLogin;
 $('#li-forgot').onclick=e=>{ e.preventDefault(); $('#li-forgotbox').classList.remove('hidden'); $('#li-femail').value=$('#li-email').value; $('#li-fmsg').textContent=''; $('#li-femail').focus(); };
 $('#li-fcancel').onclick=()=>$('#li-forgotbox').classList.add('hidden');
 $('#li-fsend').onclick=sendResetLink;
-$('#li-show').onclick=()=>{ const i=$('#li-pw'), sh=i.type==='password'; i.type=sh?'text':'password'; $('#li-show').textContent=sh?'Hide':'Show'; };
+$('#li-show').onclick=()=>{ const i=$('#li-pw'), sh=i.type==='password'; i.type=sh?'text':'password'; const b=$('#li-show'); b.classList.toggle('on',sh); b.title=sh?'Hide password':'Show password'; b.setAttribute('aria-label',b.title); };
 $('#li-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
 boot();
 </script>
